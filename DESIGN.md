@@ -924,7 +924,7 @@ Scaffold
 IPC + CLI
 - [x] Unix socket server with request routing
 - [x] CLI: `ui show`
-- [ ] CLI: `selection get/set`
+- [x] CLI: `selection get/set`
 - [ ] CLI: `history list/apply/swap`
 
 History + GUI
@@ -952,3 +952,38 @@ Testing and Docs
 - [ ] Manual tests per checklist
 - [ ] Update DESIGN.md if decisions change
 - [ ] Prepare quickstart guide (future)
+
+## 24. Clipboard Implementation Notes (GTK4/PyGObject, Wayland)
+
+Summary
+- For plain text, prefer Clipboard.set("...") in GTK4; PyGObject handles the GValue internally.
+- For advanced cases, use Gdk.ContentProvider with a retained reference to avoid early GC.
+- Ensure all clipboard operations run on the GTK main thread (use GLib.idle_add from worker threads).
+- Primary selection is supported but compositor/app-dependent under Wayland.
+
+Verified approach (strings)
+- Write:
+  - display = Gdk.Display.get_default()
+  - clipboard = display.get_clipboard()  # or get_primary_clipboard()
+  - clipboard.set("Hello World")  # PyGObject converts to GValue(gchararray)
+- Read (async):
+  - clipboard.read_text_async(None, callback)
+  - text = clipboard.read_text_finish(result)
+
+Fallback (provider, with retention)
+- If Clipboard.set is not available on the binding, use:
+  - val = GObject.Value(); val.init(str); val.set_string(text)
+  - provider = Gdk.ContentProvider.new_for_value(val)
+  - clipboard.set_content(provider)
+- Important: retain provider (e.g., keep in a list attribute) until another owner takes the clipboard.
+
+Threading/Timing
+- Schedule set/get via GLib.idle_add in main thread.
+- Allow small delays between set and subsequent get in automated tests.
+
+Backend checks
+- Prefer native Wayland backend when running on Wayland:
+  - Environment variable: GDK_BACKEND=wayland (for testing)
+  - Detect backend via type names if needed (e.g., GdkWaylandDisplay).
+
+Documentation/Research

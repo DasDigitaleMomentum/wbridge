@@ -21,7 +21,8 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Gio", "2.0")
-    from gi.repository import Gtk, Gio, GLib  # type: ignore
+    gi.require_version("Gdk", "4.0")
+    from gi.repository import Gtk, Gio, GLib, Gdk, GObject  # type: ignore
 except Exception as e:
     print("Error: GTK4/PyGObject not available. Please install system packages (e.g., python3-gi, gir1.2-gtk-4.0).")
     print(f"Details: {e}")
@@ -64,14 +65,22 @@ class BridgeApplication(Gtk.Application):
                          flags=Gio.ApplicationFlags.FLAGS_NONE)
         self._logger = setup_logging()
         self._ipc: IPCServer | None = None
+        self._display: object | None = None
+        self._providers: list = []
 
     def do_startup(self) -> None:
-        super().do_startup()
+        # Explicitly chain to Gtk.Application to avoid GI binding quirks
+        Gtk.Application.do_startup(self)
         self._logger.info("Starting wbridge application")
         # Start IPC server early; handler will marshal UI ops to main thread
         self._ipc = IPCServer(self._ipc_handler)
         self._ipc.start()
         self._logger.info("IPC server started")
+        # Prepare display handles for selections
+        try:
+            self._display = Gdk.Display.get_default()
+        except Exception:
+            self._display = None
 
     def do_shutdown(self) -> None:
         self._logger.info("Shutting down")
@@ -87,6 +96,96 @@ class BridgeApplication(Gtk.Application):
         if not win:
             win = MainWindow(self)
         win.present()
+
+    # Helper methods (run on main thread via GLib.idle_add when needed)
+    def _ensure_display(self) -> object:
+        if self._display is None:
+            try:
+                self._display = Gdk.Display.get_default()
+            except Exception:
+                self._display = None
+        return self._display
+
+    def _set_selection_mainthread(self, which: str, text: str) -> None:
+        disp = self._ensure_display()
+        try:
+            # Obtain the right clipboard object
+            clip = disp.get_primary_clipboard() if which == "primary" else disp.get_clipboard()  # type: ignore[attr-defined]
+            # Preferred: simple set(...) for strings in GTK4 (PyGObject handles GValue)
+            if hasattr(clip, "set"):
+                try:
+                    clip.set(text)  # type: ignore[attr-defined]
+                    return
+                except Exception:
+                    pass
+            # Fallback: value-based provider, keep a reference to avoid GC
+            try:
+                val = GObject.Value()
+                val.init(str)  # type: ignore[arg-type]
+                val.set_string(text)
+                provider = Gdk.ContentProvider.new_for_value(val)
+            except Exception:
+                # As last resort, bytes-based provider
+                try:
+                    b = GLib.Bytes.new(text.encode("utf-8"))  # type: ignore[attr-defined]
+                except Exception:
+                    b = GLib.Bytes(text.encode("utf-8"))  # type: ignore
+                try:
+                    formats = Gdk.ContentFormats.parse("text/plain;charset=utf-8")
+                except Exception:
+                    formats = None
+                provider = Gdk.ContentProvider.new_for_bytes(formats or "text/plain", b)
+            # Keep provider alive until next ownership change
+            try:
+                self._providers.append(provider)  # type: ignore[name-defined]
+            except Exception:
+                pass
+            if hasattr(clip, "set_content"):
+                clip.set_content(provider)  # type: ignore[attr-defined]
+            else:
+                clip.set(provider)  # type: ignore[attr-defined]
+        except Exception as e:
+            self._logger.exception("set_selection error: %s", e)
+
+    def _get_selection_blocking(self, which: str, timeout_ms: int = 1000) -> str:
+        """
+        Schedule an async read on the GTK main thread and wait for completion.
+        Returns empty string on timeout/error.
+        """
+        result = {"text": ""}
+        done = {"flag": False}
+
+        def _start_read():
+            try:
+                disp = self._ensure_display()
+                if which == "primary":
+                    clip = disp.get_primary_clipboard()  # type: ignore[attr-defined]
+                else:
+                    clip = disp.get_clipboard()  # type: ignore[attr-defined]
+
+                def _on_finish(source, res):
+                    try:
+                        txt = source.read_text_finish(res)
+                        result["text"] = txt or ""
+                    except Exception:
+                        result["text"] = ""
+                    finally:
+                        done["flag"] = True
+                    return False
+
+                clip.read_text_async(None, _on_finish)  # type: ignore[arg-type]
+            except Exception:
+                done["flag"] = True
+            return False
+
+        GLib.idle_add(_start_read, priority=GLib.PRIORITY_DEFAULT)  # type: ignore
+        # Busy-wait with small sleeps; GLib timeout in a separate thread is fine for V1.
+        waited = 0
+        step = 0.01
+        while not done["flag"] and waited < timeout_ms / 1000.0:
+            GLib.usleep(int(step * 1_000_000))
+            waited += step
+        return result["text"]
 
     # ------------- IPC handler -------------
     def _ipc_handler(self, req: dict) -> dict:
@@ -114,6 +213,18 @@ class BridgeApplication(Gtk.Application):
 
             GLib.idle_add(_present, priority=GLib.PRIORITY_DEFAULT)  # type: ignore
             return {"ok": True, "data": {"op": "ui.show"}}
+
+        if op == "selection.set":
+            which = str(req.get("which", "clipboard")).lower()
+            text = str(req.get("text", ""))
+            # Run on main thread and wait briefly for it to be scheduled
+            GLib.idle_add(self._set_selection_mainthread, which, text, priority=GLib.PRIORITY_DEFAULT)  # type: ignore
+            return {"ok": True, "data": {"op": "selection.set", "which": which, "len": len(text)}}
+
+        if op == "selection.get":
+            which = str(req.get("which", "clipboard")).lower()
+            txt = self._get_selection_blocking(which)
+            return {"ok": True, "data": {"op": "selection.get", "which": which, "text": txt}}
 
         return {"ok": False, "error": f"unsupported op: {op}", "code": "INVALID_OP"}
         
