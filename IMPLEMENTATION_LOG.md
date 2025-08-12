@@ -12,6 +12,22 @@ Conventions
 
 ---
 
+## 2025-08-12 – History/GUI/IPC enhancements
+
+- Timestamp: 2025-08-12
+- Scope:
+  - IPC: implementiert `history.list/apply/swap`; `action.run` + `trigger`; Settings/Actions werden beim Start geladen.
+  - GUI/History: zweizeilige Einträge mit Apply-Buttons, „Aktuell: …“-Label je Bereich, manueller Refresh + Zähler; Swap‑Button; stabile Refresh‑Mechanik (Dirty‑Flag), keine UI‑Blockierung.
+  - GUI/Actions: Liste aus actions.json; Quellwahl (Clipboard/Primary/Text); Run‑Button mit Ergebnisanzeige; Reload actions.
+  - GUI/Settings: Basisinfos (GDK‑Backend, Socket, Log) + Platzhalter‑Buttons (Shortcuts/Autostart).
+  - Stabilität: zentrale Apply‑Logik, asynchrone Lese‑Guards (`_reading_cb`, `_reading_pr`), kein reentrantes Listen‑Refresh, Shutdown‑Fix (`Gtk.Application.do_shutdown(self)`).
+  - CLI: History‑Subcommands arbeiten gegen neue IPC‑Handler; manuelle Tests durchgeführt.
+  - DESIGN.md: Checkliste angepasst (umgesetzte Punkte abgehakt).
+- Local commit:
+  - tbd (nach Push): feat(gui,ipc): History‑IPC, History‑UI mit „Aktuell“, Actions‑Tab, Settings‑Basis; Async‑Guards/Dirty‑Refresh; CLI‑Integration
+- Notes:
+  - Bugfixes: „Doppel‑Klick nötig“ und „Hängen nach erster Selektion“ behoben durch sofortige History‑Aktualisierung, asynchrones Label‑Update, Dirty‑Flag‑Refresh und In‑Flight‑Guards.
+
 ## 2025-08-12 – Initial scaffold, push to org
 
 - Timestamp: 2025-08-12
