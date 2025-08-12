@@ -919,24 +919,24 @@ Notes
 Scaffold
 - [x] Package structure created
 - [x] Entry points (`wbridge-app`, `wbridge`) defined
-- [ ] Logging and config directories initialized
+- [x] Logging and config directories initialized
 
 IPC + CLI
 - [x] Unix socket server with request routing
 - [x] CLI: `ui show`
 - [x] CLI: `selection get/set`
-- [ ] CLI: `history list/apply/swap`
+- [x] CLI: `history list/apply/swap`
 
 History + GUI
-- [ ] GTK window with tabs (History, Actions, Settings, Status)
-- [ ] Clipboard/Primary monitoring wired
-- [ ] History context actions (promote to clipboard/primary, swap)
+- [x] GTK window with tabs (History, Actions, Settings, Status)
+- [x] Clipboard/Primary monitoring wired
+- [x] History context actions (promote to clipboard/primary, swap)
 
 Actions Engine
-- [ ] Placeholder substitution
-- [ ] HTTP action runner
-- [ ] Shell action runner
-- [ ] `triggers` mapping (name → action)
+- [x] Placeholder substitution
+- [x] HTTP action runner
+- [x] Shell action runner
+- [x] `triggers` mapping (name → action)
 
 GNOME Integration + Autostart
 - [ ] GNOME Custom Shortcuts create/update/remove (Gio.Settings)
@@ -944,9 +944,9 @@ GNOME Integration + Autostart
 - [ ] Suggested shortcuts installable from UI
 
 Configuration
-- [ ] settings.ini handling
-- [ ] actions.json handling
-- [ ] Optional local HTTP trigger profile supported
+- [x] settings.ini handling
+- [x] actions.json handling
+- [x] Optional local HTTP trigger profile supported
 
 Testing and Docs
 - [ ] Manual tests per checklist
