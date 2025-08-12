@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wbridge"
+version = "0.1.0"
+description = "General-purpose selection and shortcut bridge with GTK4/GDK on Wayland; CLI+GUI in one package."
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["wayland", "gtk4", "clipboard", "primary-selection", "shortcuts", "cli", "ipc"]
+license = { text = "MIT" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Environment :: X11 Applications :: GTK",  # GTK applies though Wayland session is target
+  "Topic :: Utilities",
+]
+
+# Keep hard dependencies minimal; GTK bindings are provided by the system (python3-gi).
+# HTTP actions can use urllib in-core or 'requests' via optional extra.
+dependencies = []
+
+[project.optional-dependencies]
+http = ["requests>=2.31.0"]
+
+[project.scripts]
+wbridge = "wbridge.cli:main"
+wbridge-app = "wbridge.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*", "docs*"]
