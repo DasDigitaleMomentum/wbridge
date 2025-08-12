@@ -31,6 +31,7 @@ except Exception as e:
 from .logging_setup import setup_logging
 from .server_ipc import IPCServer
 from .platform import active_env_summary
+from .gui_window import MainWindow as UIMainWindow
 
 
 class MainWindow(Gtk.ApplicationWindow):
@@ -94,7 +95,7 @@ class BridgeApplication(Gtk.Application):
     def do_activate(self) -> None:
         win = self.props.active_window
         if not win:
-            win = MainWindow(self)
+            win = UIMainWindow(self)
         win.present()
 
     # Helper methods (run on main thread via GLib.idle_add when needed)
@@ -205,7 +206,7 @@ class BridgeApplication(Gtk.Application):
                 try:
                     win = self.props.active_window
                     if not win:
-                        win = MainWindow(self)
+                        win = UIMainWindow(self)
                     win.present()
                 except Exception as e:
                     self._logger.exception("ui.show error: %s", e)
