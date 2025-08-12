@@ -917,13 +917,13 @@ Notes
 ## 23. Implementation Checklist (Progress Tracking)
 
 Scaffold
-- [ ] Package structure created
-- [ ] Entry points (`wbridge-app`, `wbridge`) defined
+- [x] Package structure created
+- [x] Entry points (`wbridge-app`, `wbridge`) defined
 - [ ] Logging and config directories initialized
 
 IPC + CLI
-- [ ] Unix socket server with request routing
-- [ ] CLI: `ui show`
+- [x] Unix socket server with request routing
+- [x] CLI: `ui show`
 - [ ] CLI: `selection get/set`
 - [ ] CLI: `history list/apply/swap`
 
