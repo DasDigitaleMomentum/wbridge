@@ -22,7 +22,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import os
+import shutil
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Tuple
+
+from .platform import xdg_config_dir, xdg_state_dir, autostart_desktop_path
 
 from .client_ipc import send_request, cli_exit_code_from_response
 from .profiles_manager import (
@@ -183,6 +189,122 @@ def cmd_profile_install(args: argparse.Namespace) -> int:
         return 1
 
 
+# ------------- Config CLI helpers -------------
+
+def _config_paths() -> Dict[str, str]:
+    cfg = xdg_config_dir()
+    return {
+        "settings": str(cfg / "settings.ini"),
+        "actions": str(cfg / "actions.json"),
+        "state_log": str(xdg_state_dir() / "bridge.log"),
+        "autostart_desktop": str(autostart_desktop_path()),
+    }
+
+
+def cmd_config_show_paths(args: argparse.Namespace) -> int:
+    paths = _config_paths()
+    if getattr(args, "json", False):
+        print(json.dumps(paths, ensure_ascii=False, indent=2))
+    else:
+        for k, v in paths.items():
+            print(f"{k}: {v}")
+    return 0
+
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _backup_file(path: Path) -> Path:
+    ts = _timestamp()
+    bak = path.with_suffix(path.suffix + f".bak-{ts}")
+    shutil.copy2(path, bak)
+    return bak
+
+
+def cmd_config_backup(args: argparse.Namespace) -> int:
+    paths = _config_paths()
+    what = (args.what or "all").lower()
+    codes = 0
+    try:
+        if what in ("actions", "all"):
+            p = Path(paths["actions"])
+            if p.exists():
+                b = _backup_file(p)
+                print(f"actions backup: {b}")
+        if what in ("settings", "all"):
+            p = Path(paths["settings"])
+            if p.exists():
+                b = _backup_file(p)
+                print(f"settings backup: {b}")
+        return 0
+    except Exception as e:
+        print(f"backup failed: {e}", file=sys.stderr)
+        return 3
+
+
+def cmd_config_reset(args: argparse.Namespace) -> int:
+    paths = _config_paths()
+    keep_actions = bool(args.keep_actions)
+    keep_settings = bool(args.keep_settings)
+    do_backup = bool(args.backup)
+    try:
+        if not keep_actions:
+            ap = Path(paths["actions"])
+            if ap.exists():
+                if do_backup:
+                    b = _backup_file(ap)
+                    print(f"actions backed up: {b}")
+                ap.unlink()
+                print("actions.json removed")
+        if not keep_settings:
+            sp = Path(paths["settings"])
+            if sp.exists():
+                if do_backup:
+                    b = _backup_file(sp)
+                    print(f"settings backed up: {b}")
+                sp.unlink()
+                print("settings.ini removed")
+        return 0
+    except Exception as e:
+        print(f"reset failed: {e}", file=sys.stderr)
+        return 3
+
+
+def cmd_config_restore(args: argparse.Namespace) -> int:
+    src = Path(args.file)
+    if not src.exists():
+        print("restore: --file does not exist", file=sys.stderr)
+        return 2
+    paths = _config_paths()
+    try:
+        # Decide target based on filename suffix
+        name = src.name
+        if name.startswith("actions.json"):
+            tgt = Path(paths["actions"])
+        elif name.startswith("settings.ini"):
+            tgt = Path(paths["settings"])
+        else:
+            # heuristic: look into file header to guess
+            try:
+                text = src.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                text = ""
+            if "[general]" in text or "[integration]" in text:
+                tgt = Path(paths["settings"])
+            else:
+                tgt = Path(paths["actions"])
+        tgt.parent.mkdir(parents=True, exist_ok=True)
+        tmp = tgt.parent / (tgt.name + ".tmp")
+        shutil.copy2(src, tmp)
+        os.replace(tmp, tgt)
+        print(f"restored into: {tgt}")
+        return 0
+    except Exception as e:
+        print(f"restore failed: {e}", file=sys.stderr)
+        return 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wbridge", description="Selection/Shortcut Bridge CLI")
     sub = p.add_subparsers(dest="sub")
@@ -252,6 +374,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_prof_install.add_argument("--install-shortcuts", action="store_true", help="install recommended GNOME shortcuts from the profile")
     p_prof_install.add_argument("--dry-run", action="store_true", help="do not write files; print planned changes")
     p_prof_install.set_defaults(func=cmd_profile_install)
+
+    # config
+    p_cfg = sub.add_parser("config", help="configuration utilities")
+    sub_cfg = p_cfg.add_subparsers(dest="sub_cfg")
+
+    p_cfg_paths = sub_cfg.add_parser("show-paths", help="print important file paths")
+    p_cfg_paths.add_argument("--json", action="store_true", help="print as JSON")
+    p_cfg_paths.set_defaults(func=cmd_config_show_paths)
+
+    p_cfg_backup = sub_cfg.add_parser("backup", help="backup config files with timestamp")
+    p_cfg_backup.add_argument("--what", choices=["actions", "settings", "all"], default="all")
+    p_cfg_backup.set_defaults(func=cmd_config_backup)
+
+    p_cfg_reset = sub_cfg.add_parser("reset", help="reset config files (delete)")
+    p_cfg_reset.add_argument("--keep-actions", action="store_true", help="do not delete actions.json")
+    p_cfg_reset.add_argument("--keep-settings", action="store_true", help="do not delete settings.ini")
+    p_cfg_reset.add_argument("--backup", action="store_true", help="create timestamped backups before deleting")
+    p_cfg_reset.set_defaults(func=cmd_config_reset)
+
+    p_cfg_restore = sub_cfg.add_parser("restore", help="restore from a backup file")
+    p_cfg_restore.add_argument("--file", required=True, help="path to backup file")
+    p_cfg_restore.set_defaults(func=cmd_config_restore)
 
     return p
 
