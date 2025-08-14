@@ -156,6 +156,83 @@ pip install -e ".[http]"
 ```
 
 
+## Profiles & Witsy Quickstart
+
+Voraussetzungen
+- Optionales HTTP-Extra für HTTP-Aktionen: `pip install -e ".[http]"` (oder ohne `-e`).
+- Ein lokaler HTTP-Trigger muss erreichbar sein, wenn du die Witsy‑Aktionen nutzen willst (Default: http://127.0.0.1:18081/trigger).
+
+Profile auflisten/anzeigen
+```bash
+wbridge profile list
+wbridge profile show --name witsy
+```
+
+Profil installieren (in die User‑Konfiguration)
+```bash
+# Dry-run (zeigt geplante Änderungen ohne zu schreiben)
+wbridge profile install --name witsy --dry-run
+
+# Installation mit Überschreiben gleichnamiger Actions/Trigger und Settings‑Patch:
+wbridge profile install --name witsy --patch-settings --overwrite-actions
+
+# Optional: empfohlene GNOME‑Shortcuts des Profils mitinstallieren
+wbridge profile install --name witsy --install-shortcuts
+```
+
+Hinweise
+- Einstellungen: Im GUI → Settings‑Tab → „Integration Status“ prüfen:
+  - integration.http_trigger_enabled, Base‑URL, Trigger‑Pfad
+- Actions‑Tab: Wenn `http_trigger_enabled=false`, werden Run‑Buttons deaktiviert und ein Hinweis angezeigt („HTTP Trigger disabled – in Settings aktivieren“).
+- Shortcuts: Profil‑Shortcuts können optional über `--install-shortcuts` installiert werden. Die allgemeinen UI‑Buttons für Shortcuts sind derzeit Platzhalter.
+
+## Actions & Triggers Editor
+
+Der Actions‑Tab zeigt alle Aktionen aus `~/.config/wbridge/actions.json` und ermöglicht Bearbeitung sowie Tests:
+
+- Darstellung
+  - Jede Aktion als Expander mit Kopfzeilen‑Preview (HTTP: `METHOD URL`, Shell: `command`).
+  - Im Expander: Raw‑JSON‑Editor (monospaced).
+- Buttons je Aktion
+  - Run: führt die Aktion mit der gewählten Quelle (Clipboard/Primary/Text) aus.
+  - Save: parst/validiert die JSON‑Definition und speichert atomar in `actions.json`. Vorher wird eine Timestamp‑Sicherung (`actions.json.bak-YYYYmmdd-HHMMSS`) angelegt. Die Liste wird neu geladen.
+  - Cancel: verwirft lokale Änderungen und lädt die Datei neu.
+  - Duplicate: legt eine Kopie mit eindeutigem Namen an (z. B. „(copy)”).
+  - Delete: löscht die Aktion; zugehörige Trigger‑Einträge werden entfernt.
+- Add Action
+  - Fügt eine Standard‑HTTP‑Aktion (GET, leere URL) hinzu. Speicherung erfolgt atomar, die Liste wird neu geladen.
+- Triggers‑Editor (unterhalb der Liste)
+  - Alias → Action‑Zuordnung (Alias als Entry, Action als ComboBox).
+  - „Add Trigger“, „Save Triggers“, „Delete“ pro Zeile.
+  - Validierung: keine doppelten Aliase; Action‑Name muss existieren.
+- Hinweise
+  - `http_trigger_enabled=false` deaktiviert die Run‑Buttons. Editieren/Speichern bleibt möglich.
+  - Beim Umbenennen einer Aktion aktualisiert der Editor Trigger nicht automatisch. Passen Sie Aliase bei Bedarf im Triggers‑Editor an.
+
+## Settings Inline‑Edit & Health‑Check
+
+Im Settings‑Tab können zentrale Integrationswerte direkt bearbeitet werden:
+
+- Inline‑Edit (Whitelist)
+  - `integration.http_trigger_enabled` (Switch)
+  - `integration.http_trigger_base_url` (Entry, muss mit http/https beginnen)
+  - `integration.http_trigger_trigger_path` (Entry, muss mit `/` beginnen)
+- Speichern/Verwerfen/Reload Settings
+  - Änderungen werden atomar in `~/.config/wbridge/settings.ini` geschrieben (Tempfile + Replace) und anschließend sofort im UI reflektiert.
+  - „Reload Settings“ lädt die Datei manuell neu (nützlich nach CLI‑Änderungen).
+- Health‑Check
+  - Button „Health check“ sendet `GET {base_url}{health_path}` (Default: `/health`) mit kurzem Timeout.
+  - Ergebnis (OK/Fehler + HTTP‑Code) wird angezeigt.
+
+## Hinweise zu Backups und Validierung
+
+- Actions‑Editor:
+  - Vor dem Schreiben von `actions.json` wird eine Timestamp‑Sicherung angelegt.
+  - JSON‑Validierung prüft Pflichtfelder und Typen für HTTP/Shell.
+- Settings Inline‑Edit:
+  - Atomare INI‑Writes (Tempfile + Replace).
+  - Einfache Validierung für Base‑URL/Trigger‑Pfad.
+
 ## Project Layout (to be created next)
 
 ```

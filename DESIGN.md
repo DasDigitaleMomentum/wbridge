@@ -14,6 +14,16 @@ This document specifies a general-purpose desktop bridge that:
 No hidden headless mode, no tray icon, no wl-clipboard dependency, no key injection.
 
 
+## 0. Hintergrund & Motivation
+
+Unter Wayland (und teils auch auf macOS) sind globale Hotkeys/Key‑Grabs für Anwendungen wie Electron stark eingeschränkt. In der Praxis führte dies u. a. unter Ubuntu 25.04 dazu, dass globales Copy/Paste beeinträchtigt wurde, wenn Apps globale Shortcuts aggressiv belegen. Das Projekt „Witsy“ (Electron) versuchte globale Shortcuts zu nutzen und stieß genau auf diese Limitierungen.
+
+Als Reaktion wurden PRs in Witsy erstellt:
+1) Deaktivierung der globalen Shortcuts.
+2) Bereitstellung eines minimalen lokalen HTTP‑Servers (Loopback), der Shortcut‑Trigger entgegennehmen kann.
+
+Die „Selection/Shortcut Bridge“ (wbridge) ist ein eigenständiges, generisches Projekt, das das GNOME‑Shortcut‑System erweitert, ohne globale Key‑Grabs oder Key‑Injection zu verwenden. GNOME Custom Shortcuts lösen CLI‑Befehle aus; eine laufende GTK4‑App verarbeitet die Requests via Unix‑Domain‑Socket‑IPC und führt konfigurierbare Aktionen (HTTP/Shell) auf Basis der aktuellen Selektion/History aus. Dadurch bleibt die Lösung Wayland‑freundlich, robust und universell nutzbar – u. a. für die optionale Anbindung von Witsy über ein lokales HTTP‑Profil. Das Projekt ist öffentlich, neutral benannt und unter MIT‑Lizenz.
+
 ## 1. Goals and Non-Goals
 
 Goals
@@ -257,6 +267,27 @@ Exit Codes
 - 2: invalid arguments
 - 3: action failed
 
+### Profile Commands (CLI)
+
+Subcommands
+- List built-in profiles:
+  - wbridge profile list
+- Show profile details (metadata + core contents):
+  - wbridge profile show --name witsy
+- Install profile into user config:
+  - wbridge profile install --name witsy [--overwrite-actions] [--patch-settings] [--install-shortcuts] [--dry-run]
+
+Notes
+- Exit Codes: 0 OK, 2 invalid args, 3 failure.
+- Behavior:
+  - actions.json merge by action "name"; default is user-first (skip), overwrite with --overwrite-actions.
+  - triggers merge by key; default user-first, overwrite with --overwrite-actions.
+  - settings.patch.ini patches only whitelisted keys in [integration] when --patch-settings is provided.
+  - shortcuts.json installs recommended GNOME shortcuts when --install-shortcuts is provided (no forced overwrite; conflicts are surfaced).
+- Examples:
+  - wbridge profile show --name witsy
+  - wbridge profile install --name witsy --patch-settings --overwrite-actions --dry-run
+
 
 ## 8. GNOME Custom Shortcuts (Automation)
 
@@ -440,6 +471,16 @@ Package name suggestion: `wbridge` (generic)
 
 - wbridge/logging_setup.py
   - File + console logger
+
+- wbridge/profiles_manager.py
+  - Profiles/Preset Manager API (list/show/install) inkl. Merge-/Backup-Strategie, Settings‑Patch (Whitelist), optionaler Shortcuts‑Installation
+- Package Resources: wbridge/profiles/witsy/
+  - profile.toml, actions.json, shortcuts.json, settings.patch.ini (werden via importlib.resources geladen)
+
+Packaging
+- pyproject.toml enthält Paket‑Daten für Profile:
+  - [tool.setuptools.package-data]
+    "wbridge.profiles" = ["**/*"]
 
 
 ## 12. Logging and Diagnostics
@@ -938,6 +979,12 @@ Actions Engine
 - [x] Shell action runner
 - [x] `triggers` mapping (name → action)
 
+Profiles & Presets
+- [x] ProfileManager + CLI (profile list/show/install)
+- [x] Built-in Profil „Witsy“ als Paketressource
+- [x] Settings‑UI: Profile‑Bereich (Dropdown/Anzeigen/Installieren), Integration‑Status
+- [x] Actions‑Tab: Hinweis/Disable bei http_trigger_enabled = false
+
 GNOME Integration + Autostart
 - [ ] GNOME Custom Shortcuts create/update/remove (Gio.Settings)
 - [ ] Autostart desktop file create/remove
@@ -1214,6 +1261,128 @@ Akzeptanzkriterien
 - Doku-Abschnitte (dieser) enthalten alle notwendigen Informationen zur Umsetzung/Tests.
 
 ## 28. Nächste Schritte (Implementierung; Folge-Session)
-- ProfileManager und CLI/GUI‑Integration gemäß Spezifikation implementieren.
-- Witsy‑Profil als built-in Ressource beilegen.
-- README und DESIGN (dieser Abschnitt) ggf. verfeinern, sobald Implementierungsdetails konkret sind.
+- Autostart: Implementierung von `autostart.py` und UI‑Buttons (aktivieren/deaktivieren).
+- GNOME Shortcuts: UI‑Buttons in Settings funktionsfähig machen (Install/Remove der empfohlenen Shortcuts), Fehler-/Konfliktanzeige.
+- Tests/Docs: Manuelle Tests gemäß Checkliste (Abschnitt 27) dokumentieren; README Quickstart ggf. erweitern (Screenshots/Fehlermeldungen).
+- Stabilität: kleinere UX‑Polish im Actions‑Tab (z. B. Statusfarben), Logging‑Details (Aktionen mit Dauer/Fehlercodes).
+- Packaging: optionaler Smoke‑Test Wheel/SDist, Verifikation der Profil‑Ressourcen im Paket.
+
+## 29. Geplante Erweiterungen – Settings Reload, Inline‑Edit, Health‑Check, Config‑CLI, Profile‑Shortcuts Uninstall
+
+Ziel
+- Laufenden Zustand nach Profil‑Install/CLI‑Änderungen zuverlässig übernehmen (ohne App‑Neustart).
+- Integration‑Werte direkt in der UI bearbeiten (whitelisted Keys).
+- Optionalen Health‑Check für lokale HTTP‑Trigger anzeigen.
+- CLI‑Kommandos für Config‑Reset/Backup/Restore bereitstellen.
+- Profil‑Shortcuts wieder entfernen können (nur die durch ein Profil installierten).
+
+Änderungen (funktional)
+1) Settings Reload
+   - GUI: Nach erfolgreicher Profil‑Installation (Settings‑Tab) → Settings neu laden, Integrations‑Status + Actions‑Liste refreshen.
+   - GUI: „Reload Settings“‑Button.
+   - Optional: Gio.FileMonitor auf ~/.config/wbridge/settings.ini und ~/.config/wbridge/actions.json (Auto‑Reload + UI Refresh).
+
+2) Inline‑Edit der Integration
+   - Settings‑Tab: Switch (integration.http_trigger_enabled), Entry (integration.http_trigger_base_url), Entry (integration.http_trigger_trigger_path).
+   - Atomare Saves (temp + replace), Validierung (Base‑URL http/https; Trigger‑Pfad beginnt mit „/“).
+   - Nach Speichern: Status + Actions refresh; „Verwerfen“ lädt Settings erneut.
+
+3) Health‑Check (optional)
+   - Button „Health check“ → GET {base_url}{health_path} (Default /health).
+   - Anzeige OK/Fehler (HTTP‑Code), optionale Farbindikation.
+
+4) Config‑CLI (optional)
+   - wbridge config show-paths
+   - wbridge config reset [--keep-actions] [--keep-settings] [--backup]
+   - wbridge config backup [--what actions|settings|all]
+   - wbridge config restore --file /path/to/backup
+
+5) Profile‑Shortcuts Uninstall (optional)
+   - profiles_manager.remove_profile_shortcuts(name): liest shortcuts.json des Profils, berechnet Suffixe „wbridge-<normalized-name>/“, entfernt entsprechende Einträge via Gio.Settings.
+   - CLI: wbridge profile uninstall --name NAME --shortcuts-only
+   - GUI: Button „Profil‑Shortcuts entfernen“ im Profil‑Bereich.
+
+Technische Hinweise
+- Settings‑Reload: app._settings = load_settings(); anschließend self._refresh_integration_status(); self.refresh_actions_list().
+- FileMonitor: Gio.File.new_for_path(...).monitor_file(...); on change → (debounced) reload + refresh.
+- Atomare Writes: wie in profiles_manager (tempfile + os.replace).
+- HTTP Health‑Check: requests falls verfügbar, sonst urllib Request; Timeouts kurz halten (z. B. 1–2 s).
+- Shortcuts‑Remove: Nur Suffixe aus dem Profil entfernen; keine anderen Custom‑Keybindings ändern.
+
+Akzeptanzkriterien
+- Nach Profil‑Install oder CLI‑Änderungen werden Integration‑Status und Actions‑Enable ohne App‑Neustart korrekt aktualisiert.
+- Inline‑Edit speichert/validiert Werte; UI zeigt sie unmittelbar; Actions‑Run reagiert.
+- Health‑Check zeigt korrekten Status (OK bei laufendem Dienst, Fehler sonst).
+- Config‑Reset/Backup/Restore funktioniert nachvollziehbar; Pfade werden ausgewiesen.
+- Profil‑Shortcuts lassen sich gezielt entfernen, ohne fremde Shortcuts zu beeinflussen.
+
+Testplan (manuell)
+1) Disabled → Enabled nach Profil‑Install:
+   - Ausgang: http_trigger_enabled=false
+   - wbridge profile install --name witsy --patch-settings
+   - Erwartet: Status=enabled, Actions‑Run aktiv; Health‑Check OK (bei laufendem Dienst).
+
+2) Inline‑Edit:
+   - base_url/trigger_path im UI ändern → Speichern
+   - settings.ini enthält neue Werte; UI/Actions aktualisiert.
+
+3) Health‑Check:
+   - Dienst aus → Fehler; Dienst an → OK.
+
+4) Config‑CLI:
+   - show-paths: Pfade werden angezeigt
+   - reset --backup: Backups vorhanden; Dateien entfernt; UI zeigt Defaults
+   - backup/restore: Dateien werden wiederhergestellt.
+
+5) Profile‑Shortcuts Uninstall:
+   - Installiere Profil‑Shortcuts; anschließend uninstall --shortcuts-only → Einträge entfernt.
+
+6) FileMonitor (falls aktiviert):
+   - settings.ini extern editieren → UI aktualisiert automatisch.
+
+Hinweise für Doku
+- README: Hinweise zu „Reload Settings“, Health‑Check, Config‑CLI ergänzen; expliziter Hinweis: Nach CLI‑Profil‑Install ggf. „Reload Settings“ ausführen (oder FileMonitor aktivieren).
+- IMPLEMENTATION_LOG: neuen Eintrag nach Umsetzung mit Datum, Änderungen, Tests, offenen Punkten.
+
+## 30. Änderungen 2025‑08‑14 (Implementiert)
+
+Kurzüberblick
+- Actions‑Editor (Phase 1, Raw‑JSON) im Actions‑Tab:
+  - Je Aktion ein Expander mit Kopfzeilen‑Preview (Name, Typ, Kurzinfo).
+  - Inline Raw‑JSON‑Editor (monospaced) mit Buttons: Run, Save, Cancel, Duplicate, Delete.
+  - „Add Action“ fügt Standard‑HTTP‑Aktion hinzu.
+  - Save/Duplicate/Delete schreiben atomar nach ~/.config/wbridge/actions.json (Timestamp‑Backups).
+  - Validierung per `validate_action_dict()` (http/shell Felder).
+  - Nach Änderungen: `load_actions()` + UI‑Refresh.
+- Triggers‑Editor (Alias → Action) im Actions‑Tab:
+  - Liste der Trigger mit Editier‑Zeilen (Alias als Entry, Action als ComboBox), „Add Trigger“, „Save Triggers“, „Delete“ pro Zeile.
+  - Validierung (keine doppelten Aliase; Action‑Name muss existieren); atomarer Write via `write_actions_config`, anschließend Reload + UI‑Refresh.
+- Settings: Reload/Inline‑Edit/Health‑Check
+  - Nach Profil‑Installation werden Settings re‑geladen; Integration‑Status + Actions‑Enable aktualisieren sich (Fix für „Run bleibt disabled“).
+  - Inline‑Edit für `integration.http_trigger_enabled`, `integration.http_trigger_base_url`, `integration.http_trigger_trigger_path` (Validierung + atomare INI‑Writes).
+  - „Reload Settings“‑Button; „Health check“ (GET base+health_path).
+- UI‑Fix (Wrapping)
+  - PRIMARY/Clipboard „Aktuell:“‑Labels und History‑Zeilen umbrechen hart (Pango WrapMode CHAR), begrenzen Breite (`max_width_chars`), verhindern Fenster‑Verbreiterung.
+
+Technische Details
+- Neue/erweiterte Helfer (config.py):
+  - `load_actions_raw()` – rohes Laden von actions.json
+  - `write_actions_config(data)` – atomarer JSON‑Write + Timestamp‑Backup
+  - `validate_action_dict(action)` – Minimalvalidierung (http/shell)
+  - `set_integration_settings(...)` – atomare INI‑Updates für [integration]
+- GUI (gui_window.py):
+  - Actions‑Editor (Raw‑JSON) mit Save/Cancel/Duplicate/Delete + Add Action
+  - Settings‑Reload nach Profil‑Install, Inline‑Edit, Health‑Check
+  - Label‑Wrapping für „Aktuell:“ + History‑Zeilen
+
+Bekannte offene Punkte (geplant, siehe Abschnitt 29)
+- Formular‑Modus für Actions (Feld‑basierte UI statt Raw‑JSON).
+- Triggers‑Editor im Actions‑Tab (alias → action.name).
+- Config‑CLI: show‑paths, reset, backup/restore.
+- Gio.FileMonitor auf settings.ini/actions.json für Auto‑Reload.
+- Profile‑Shortcuts Uninstall (CLI/UI).
+
+Tests (Kurz)
+- Aktionen editieren/speichern/duplizieren/löschen → Backups angelegt, Liste reloaded, Run funktioniert.
+- Settings Inline‑Edit/Reload/Health‑Check → Status/Actions aktualisieren sich ohne App‑Neustart.
+- Lange PRIMARY/Clipboard‑Inhalte → Labels umbrechen, Fenster bleibt stabil.

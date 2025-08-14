@@ -1,0 +1,4 @@
+name = "witsy"
+version = "1.0.0"
+description = "Witsy local HTTP trigger integration (PR2)"
+includes = ["actions.json", "shortcuts.json", "settings.patch.ini"]
