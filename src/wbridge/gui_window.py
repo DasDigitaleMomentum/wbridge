@@ -943,6 +943,104 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception:
             pretty = str(action)
         buf.set_text(pretty, -1)
+
+        # Formular-Editor (zusätzlich zum Raw-JSON)
+        form_frame = Gtk.Frame(label="Formular")
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        form.set_margin_top(6)
+        form.set_margin_bottom(6)
+
+        # Gemeinsame Felder: name, type
+        name_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        name_lbl = Gtk.Label(label="Name:")
+        name_lbl.set_xalign(0.0)
+        name_entry = Gtk.Entry()
+        name_entry.set_text(name)
+        name_entry.set_hexpand(True)
+        name_row.append(name_lbl); name_row.append(name_entry)
+        form.append(name_row)
+
+        type_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        type_lbl = Gtk.Label(label="Type:")
+        type_lbl.set_xalign(0.0)
+        type_combo = Gtk.ComboBoxText()
+        type_combo.append("http", "http")
+        type_combo.append("shell", "shell")
+        type_combo.set_active_id(typ if typ in ("http","shell") else "http")
+        type_row.append(type_lbl); type_row.append(type_combo)
+        form.append(type_row)
+
+        # HTTP Felder
+        http_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        http_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        method_lbl = Gtk.Label(label="Method:")
+        method_lbl.set_xalign(0.0)
+        method_combo = Gtk.ComboBoxText()
+        method_combo.append("GET", "GET"); method_combo.append("POST", "POST")
+        method_combo.set_active_id(str(action.get("method","GET")).upper())
+        url_lbl = Gtk.Label(label="URL:")
+        url_lbl.set_xalign(0.0)
+        url_entry = Gtk.Entry()
+        url_entry.set_hexpand(True)
+        url_entry.set_text(str(action.get("url","")))
+        http_row1.append(method_lbl); http_row1.append(method_combo); http_row1.append(url_lbl); http_row1.append(url_entry)
+        http_box.append(http_row1)
+
+        # Shell Felder
+        shell_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sh_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        cmd_lbl = Gtk.Label(label="Command:")
+        cmd_lbl.set_xalign(0.0)
+        cmd_entry = Gtk.Entry()
+        cmd_entry.set_hexpand(True)
+        cmd_entry.set_text(str(action.get("command","")))
+        sh_row1.append(cmd_lbl); sh_row1.append(cmd_entry)
+        shell_box.append(sh_row1)
+
+        sh_row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        args_lbl = Gtk.Label(label="Args (JSON array):")
+        args_lbl.set_xalign(0.0)
+        args_tv = Gtk.TextView(); args_tv.set_monospace(True)
+        try:
+            import json as _json
+            _args_pretty = _json.dumps(action.get("args", []), ensure_ascii=False)
+        except Exception:
+            _args_pretty = "[]"
+        args_tv.get_buffer().set_text(_args_pretty, -1)
+        args_sw = Gtk.ScrolledWindow(); args_sw.set_min_content_height(40); args_sw.set_child(args_tv)
+        sh_row2.append(args_lbl); sh_row2.append(args_sw)
+        shell_box.append(sh_row2)
+
+        sh_row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sh_switch_lbl = Gtk.Label(label="Use shell:")
+        sh_switch_lbl.set_xalign(0.0)
+        use_shell_switch = Gtk.Switch()
+        use_shell_switch.set_active(bool(action.get("use_shell", False)))
+        sh_row3.append(sh_switch_lbl); sh_row3.append(use_shell_switch)
+        shell_box.append(sh_row3)
+
+        # Sichtbarkeit abhängig vom Typ
+        def _toggle_type(_c):
+            t = type_combo.get_active_id() or "http"
+            http_box.set_visible(t == "http")
+            shell_box.set_visible(t == "shell")
+            return False
+        _toggle_type(None)
+        type_combo.connect("changed", _toggle_type)
+
+        form.append(http_box); form.append(shell_box)
+
+        # Save (Form)
+        form_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        form_save_btn = Gtk.Button(label="Save (Form)")
+        form_save_btn.connect("clicked", self._on_action_form_save_clicked, name, name_entry, type_combo, method_combo, url_entry, cmd_entry, args_tv, use_shell_switch)
+        form_btns.append(form_save_btn)
+        form.append(form_btns)
+
+        form_frame.set_child(form)
+        vbox.append(form_frame)
+
+        # Raw JSON Editor
         sc = Gtk.ScrolledWindow()
         sc.set_min_content_height(140)
         sc.set_child(tv)
@@ -1082,6 +1180,73 @@ class MainWindow(Gtk.ApplicationWindow):
             self.actions_result.set_text(f"Action saved (backup: {backup})")
         except Exception as e:
             self.actions_result.set_text(f"Save failed: {e!r}")
+
+    def _on_action_form_save_clicked(self, _btn: Gtk.Button, original_name: str, name_entry: Gtk.Entry, type_combo: Gtk.ComboBoxText, method_combo: Gtk.ComboBoxText, url_entry: Gtk.Entry, cmd_entry: Gtk.Entry, args_tv: Gtk.TextView, use_shell_switch: Gtk.Switch) -> None:
+        try:
+            # Load current payload and find original
+            payload = load_actions_raw()
+            actions = payload.get("actions", [])
+            src = None
+            for a in actions:
+                if str(a.get("name") or "") == original_name:
+                    src = a
+                    break
+            if src is None:
+                self.actions_result.set_text("Save (Form) failed: original action not found")
+                return
+            # Build new object from form
+            new_name = name_entry.get_text().strip()
+            typ = (type_combo.get_active_id() or "http").lower()
+            if not new_name:
+                self.actions_result.set_text("Validation failed: action.name must not be empty")
+                return
+            obj = dict(src)  # start from current to preserve optional fields
+            obj["name"] = new_name
+            obj["type"] = typ
+            if typ == "http":
+                obj["method"] = (method_combo.get_active_id() or "GET").upper()
+                obj["url"] = (url_entry.get_text() or "").strip()
+            else:
+                obj["command"] = (cmd_entry.get_text() or "").strip()
+                # args from JSON textview
+                import json as _json
+                args_text = self._get_textview_text(args_tv).strip()
+                try:
+                    parsed_args = _json.loads(args_text) if args_text else []
+                    if not isinstance(parsed_args, list):
+                        raise ValueError("args must be a JSON array")
+                except Exception as e:
+                    self.actions_result.set_text(f"Validation failed (args): {e}")
+                    return
+                obj["args"] = parsed_args
+                obj["use_shell"] = bool(use_shell_switch.get_active())
+            # Validate
+            ok, err = validate_action_dict(obj)
+            if not ok:
+                self.actions_result.set_text(f"Validation failed: {err}")
+                return
+            # Replace or append
+            replaced = False
+            for i, a in enumerate(actions):
+                if str(a.get("name") or "") == original_name:
+                    actions[i] = obj
+                    replaced = True
+                    break
+            if not replaced:
+                actions.append(obj)
+            payload["actions"] = actions
+            backup = write_actions_config(payload)
+            # reload app actions
+            app = self.get_application()
+            try:
+                new_cfg = load_actions()
+                setattr(app, "_actions", new_cfg)
+            except Exception:
+                pass
+            self.refresh_actions_list()
+            self.actions_result.set_text(f"Action saved (form) (backup: {backup})")
+        except Exception as e:
+            self.actions_result.set_text(f"Save (Form) failed: {e!r}")
 
     def _on_action_cancel_clicked(self, _btn: Gtk.Button) -> None:
         # Simply reload actions from disk and rebuild list
