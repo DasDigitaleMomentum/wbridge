@@ -22,7 +22,7 @@ from gi.repository import Pango  # type: ignore
 from typing import Optional, Callable, cast
 import logging
 
-from .platform import active_env_summary, socket_path, xdg_state_dir
+from .platform import active_env_summary, socket_path, xdg_state_dir, xdg_config_dir
 from .config import (
     load_actions,
     load_settings,
@@ -32,10 +32,13 @@ from .config import (
     validate_action_dict,
 )
 from .actions import run_action, ActionContext
+from . import gnome_shortcuts
 from .profiles_manager import (
     list_builtin_profiles,
     show_profile as pm_show_profile,
     install_profile as pm_install_profile,
+    load_profile_shortcuts,
+    remove_profile_shortcuts,
 )
 
 
@@ -300,6 +303,8 @@ class MainWindow(Gtk.ApplicationWindow):
         # initial population
         self.refresh_actions_list()
         self._rebuild_triggers_editor()
+        # start file monitors (settings.ini, actions.json) for auto-reload
+        self._init_file_monitors()
 
         # Settings tab (v1)
         settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -1487,6 +1492,61 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception as e:
             self.actions_result.set_text(f"Save Triggers failed: {e!r}")
 
+    # --- File monitors (Auto-Reload for settings.ini and actions.json) ---
+
+    def _init_file_monitors(self) -> None:
+        try:
+            cfg = xdg_config_dir()
+            self._settings_monitor = None
+            self._actions_monitor = None
+            self._settings_debounce_id = 0
+            self._actions_debounce_id = 0
+
+            # settings.ini monitor
+            try:
+                sfile = Gio.File.new_for_path(str(cfg / "settings.ini"))
+                self._settings_monitor = sfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+                def _on_s_changed(_mon, *_args):
+                    if getattr(self, "_settings_debounce_id", 0):
+                        return
+                    def _reload():
+                        try:
+                            self._reload_settings()
+                        except Exception:
+                            pass
+                        self._settings_debounce_id = 0
+                        return False
+                    self._settings_debounce_id = GLib.timeout_add(200, _reload)  # type: ignore[arg-type]
+                self._settings_monitor.connect("changed", _on_s_changed)
+            except Exception:
+                pass
+
+            # actions.json monitor
+            try:
+                afile = Gio.File.new_for_path(str(cfg / "actions.json"))
+                self._actions_monitor = afile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+                def _on_a_changed(_mon, *_args):
+                    if getattr(self, "_actions_debounce_id", 0):
+                        return
+                    def _reload():
+                        try:
+                            app = self.get_application()
+                            new_cfg = load_actions()
+                            setattr(app, "_actions", new_cfg)
+                            self.refresh_actions_list()
+                            self._rebuild_triggers_editor()
+                            self.actions_result.set_text("Config reloaded from disk (actions.json).")
+                        except Exception:
+                            pass
+                        self._actions_debounce_id = 0
+                        return False
+                    self._actions_debounce_id = GLib.timeout_add(200, _reload)  # type: ignore[arg-type]
+                self._actions_monitor.connect("changed", _on_a_changed)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     # --- Settings helpers: reload, edit, health check ---
 
     def _reload_settings(self) -> None:
@@ -1651,17 +1711,89 @@ class MainWindow(Gtk.ApplicationWindow):
             self.profile_result.set_text(f"Fehler: {e!r}")
 
     def _on_install_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
-        # Platzhalter – Logik folgt später
-        self.settings_result.set_text("GNOME Shortcuts installieren: noch nicht implementiert.")
+        # Install GNOME shortcuts with priority:
+        # 1) settings.ini [gnome] bindings -> recommended set
+        # 2) if profile selected and has shortcuts.json -> install profile shortcuts
+        # 3) fallback: default recommended bindings
+        try:
+            # 1) try settings.ini [gnome]
+            smap = self._get_settings_map()
+            gsec = smap.get("gnome", {}) if isinstance(smap, dict) else {}
+            b_prompt = gsec.get("binding_prompt")
+            b_command = gsec.get("binding_command")
+            b_ui = gsec.get("binding_ui_show")
+            if b_prompt or b_command or b_ui:
+                bindings = {}
+                if b_prompt: bindings["prompt"] = b_prompt
+                if b_command: bindings["command"] = b_command
+                if b_ui: bindings["ui_show"] = b_ui
+                gnome_shortcuts.install_recommended_shortcuts(bindings)
+                self.settings_result.set_text("GNOME Shortcuts installiert (settings.ini Priorität).")
+                return
+
+            # 2) fallback to profile shortcuts if a profile is selected
+            pid = self.profile_combo.get_active_id() if hasattr(self, "profile_combo") else None
+            if pid and pid not in ("none", "err", None):
+                items = load_profile_shortcuts(pid)
+                if items:
+                    installed = skipped = 0
+                    import re
+                    for sc in items:
+                        try:
+                            name = str(sc.get("name") or "")
+                            cmd = str(sc.get("command") or "")
+                            binding = str(sc.get("binding") or "")
+                            if not name or not cmd or not binding:
+                                skipped += 1
+                                continue
+                            norm = re.sub(r"[^a-z0-9\-]+", "-", name.lower()).strip("-")
+                            suffix = f"wbridge-{norm}/"
+                            gnome_shortcuts.install_binding(suffix, name, cmd, binding)
+                            installed += 1
+                        except Exception:
+                            skipped += 1
+                    self.settings_result.set_text(f"Profil‑Shortcuts installiert: installed={installed}, skipped={skipped}.")
+                    return
+
+            # 3) default recommended bindings
+            defaults = {
+                "prompt": "<Ctrl><Alt>p",
+                "command": "<Ctrl><Alt>m",
+                "ui_show": "<Ctrl><Alt>u",
+            }
+            gnome_shortcuts.install_recommended_shortcuts(defaults)
+            self.settings_result.set_text("GNOME Shortcuts installiert (Default‑Empfehlungen).")
+        except Exception as e:
+            self.settings_result.set_text(f"GNOME Shortcuts installieren fehlgeschlagen: {e!r}")
 
     def _on_remove_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
-        self.settings_result.set_text("GNOME Shortcuts entfernen: noch nicht implementiert.")
+        # Remove recommended shortcuts and, if a profile is selected, try to remove its shortcuts as well.
+        try:
+            gnome_shortcuts.remove_recommended_shortcuts()
+            msg = "Empfohlene GNOME Shortcuts entfernt."
+            pid = self.profile_combo.get_active_id() if hasattr(self, "profile_combo") else None
+            if pid and pid not in ("none", "err", None):
+                rep = remove_profile_shortcuts(pid)
+                msg += f" Profil‑Shortcuts entfernt: removed={rep.get('removed',0)}, skipped={rep.get('skipped',0)}."
+            self.settings_result.set_text(msg)
+        except Exception as e:
+            self.settings_result.set_text(f"GNOME Shortcuts entfernen fehlgeschlagen: {e!r}")
 
     def _on_enable_autostart_clicked(self, _btn: Gtk.Button) -> None:
-        self.settings_result.set_text("Autostart aktivieren: noch nicht implementiert.")
+        try:
+            from . import autostart
+            ok = autostart.enable()
+            self.settings_result.set_text("Autostart aktiviert." if ok else "Autostart konnte nicht aktiviert werden.")
+        except Exception as e:
+            self.settings_result.set_text(f"Autostart aktivieren fehlgeschlagen: {e!r}")
 
     def _on_disable_autostart_clicked(self, _btn: Gtk.Button) -> None:
-        self.settings_result.set_text("Autostart deaktivieren: noch nicht implementiert.")
+        try:
+            from . import autostart
+            ok = autostart.disable()
+            self.settings_result.set_text("Autostart deaktiviert." if ok else "Autostart konnte nicht deaktiviert werden.")
+        except Exception as e:
+            self.settings_result.set_text(f"Autostart deaktivieren fehlgeschlagen: {e!r}")
 
     # --- Button handlers (bestehende Set/Get-Tests) ---
 

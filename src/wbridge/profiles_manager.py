@@ -357,6 +357,55 @@ def _install_shortcuts(shortcuts: List[dict]) -> Dict[str, int]:
     return {"installed": installed, "skipped": skipped}
 
 
+def remove_profile_shortcuts(name: str) -> Dict[str, int]:
+    """
+    Remove shortcuts installed by a profile's shortcuts.json using the deterministic
+    suffix scheme: 'wbridge-' + slugify(shortcut.name) + '/'.
+    Returns {"removed": N, "skipped": M}.
+    """
+    removed = skipped = 0
+    pdir = _profile_dir(name)
+    try:
+        is_dir = bool(getattr(pdir, "is_dir", lambda: False)()) if pdir else False
+    except Exception:
+        is_dir = False
+    if not pdir or not is_dir:
+        return {"removed": 0, "skipped": 0}
+
+    shortcuts = _load_json_pkg(pdir.joinpath("shortcuts.json")) or {}  # type: ignore[attr-defined]
+    items = shortcuts.get("shortcuts") or []
+    for sc in items:
+        try:
+            sc_name = str(sc.get("name") or "")
+            if not sc_name:
+                skipped += 1
+                continue
+            norm = re.sub(r"[^a-z0-9\-]+", "-", sc_name.lower()).strip("-")
+            suffix = f"wbridge-{norm}/"
+            gnome_shortcuts.remove_binding(suffix)
+            removed += 1
+        except Exception:
+            skipped += 1
+    return {"removed": removed, "skipped": skipped}
+
+
+def load_profile_shortcuts(name: str) -> List[dict]:
+    """
+    Return raw list of shortcuts from a built-in profile's shortcuts.json.
+    If not found, returns [].
+    """
+    pdir = _profile_dir(name)
+    try:
+        is_dir = bool(getattr(pdir, "is_dir", lambda: False)()) if pdir else False
+    except Exception:
+        is_dir = False
+    if not pdir or not is_dir:
+        return []
+    shortcuts = _load_json_pkg(pdir.joinpath("shortcuts.json")) or {}  # type: ignore[attr-defined]
+    items = shortcuts.get("shortcuts") or []
+    return list(items)
+
+
 def install_profile(name: str, *, overwrite_actions: bool = False, patch_settings: bool = False,
                     install_shortcuts: bool = False, dry_run: bool = False) -> Dict[str, Any]:
     """
