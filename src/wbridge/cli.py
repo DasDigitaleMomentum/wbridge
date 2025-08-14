@@ -25,6 +25,11 @@ import sys
 from typing import Any, Dict, Tuple
 
 from .client_ipc import send_request, cli_exit_code_from_response
+from .profiles_manager import (
+    list_builtin_profiles as profiles_list,
+    show_profile as profiles_show,
+    install_profile as profiles_install,
+)
 
 
 def _print_response(ok: bool, resp: Dict[str, Any]) -> int:
@@ -134,6 +139,50 @@ def cmd_trigger(args: argparse.Namespace) -> int:
     return _print_response(ok, resp)
 
 
+def cmd_profile_list(_args: argparse.Namespace) -> int:
+    try:
+        names = profiles_list()
+        print(json.dumps(names, ensure_ascii=False, indent=2))
+        return 0
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
+def cmd_profile_show(args: argparse.Namespace) -> int:
+    name = args.name
+    if not name:
+        print("--name is required", file=sys.stderr)
+        return 2
+    try:
+        res = profiles_show(name)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("ok") else 3
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
+def cmd_profile_install(args: argparse.Namespace) -> int:
+    name = args.name
+    if not name:
+        print("--name is required", file=sys.stderr)
+        return 2
+    try:
+        report = profiles_install(
+            name,
+            overwrite_actions=bool(args.overwrite_actions),
+            patch_settings=bool(args.patch_settings),
+            install_shortcuts=bool(args.install_shortcuts),
+            dry_run=bool(args.dry_run),
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report.get("ok") else 3
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wbridge", description="Selection/Shortcut Bridge CLI")
     sub = p.add_subparsers(dest="sub")
@@ -184,6 +233,25 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--from-primary", action="store_true", help="use current primary selection")
     src.add_argument("--text", help="use literal text instead of reading a selection")
     p_tr.set_defaults(func=cmd_trigger)
+
+    # profile
+    p_prof = sub.add_parser("profile", help="profile operations")
+    sub_prof = p_prof.add_subparsers(dest="sub_prof")
+
+    p_prof_list = sub_prof.add_parser("list", help="list built-in profiles")
+    p_prof_list.set_defaults(func=cmd_profile_list)
+
+    p_prof_show = sub_prof.add_parser("show", help="show profile details")
+    p_prof_show.add_argument("--name", required=True, help="profile name to show (e.g., witsy)")
+    p_prof_show.set_defaults(func=cmd_profile_show)
+
+    p_prof_install = sub_prof.add_parser("install", help="install a profile into user config")
+    p_prof_install.add_argument("--name", required=True, help="profile name to install (e.g., witsy)")
+    p_prof_install.add_argument("--overwrite-actions", action="store_true", help="overwrite existing actions/triggers with the same names")
+    p_prof_install.add_argument("--patch-settings", action="store_true", help="patch whitelisted settings in [integration]")
+    p_prof_install.add_argument("--install-shortcuts", action="store_true", help="install recommended GNOME shortcuts from the profile")
+    p_prof_install.add_argument("--dry-run", action="store_true", help="do not write files; print planned changes")
+    p_prof_install.set_defaults(func=cmd_profile_install)
 
     return p
 

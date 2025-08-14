@@ -11,6 +11,73 @@ Conventions
 - Links: issue/PR if available (future)
 
 ---
+ 
+## 2025-08-14 – Actions Editor (Raw‑JSON), Settings Inline‑Edit/Health, Wrapping Fix
+
+- Timestamp: 2025-08-14
+- Scope:
+  - GUI – Actions Editor (Phase 1, Raw‑JSON):
+    - Actions‑Tab zeigt pro Aktion einen Expander mit Kopfzeilen‑Preview (Name, Typ, Kurzinfo).
+    - Inline Raw‑JSON‑Editor (monospace) je Aktion mit Buttons: Run, Save, Cancel, Duplicate, Delete.
+    - „Add Action“ fügt Standard‑HTTP‑Aktion hinzu.
+    - Save/Duplicate/Delete schreiben atomar nach ~/.config/wbridge/actions.json (Timestamp‑Backups), anschließend Reload der Actions und UI‑Refresh.
+  - Config‑Helfer:
+    - load_actions_raw(): rohes Laden der actions.json
+    - write_actions_config(data): atomarer JSON‑Write + Timestamp‑Backup
+    - validate_action_dict(action): Minimalvalidierung für http/shell
+    - set_integration_settings(...): atomare INI‑Updates für [integration]
+  - GUI – Settings Verbesserungen:
+    - Nach Profil‑Installation: Settings‑Reload; Integration‑Status + Actions‑Enable aktualisieren sich (Fix: „Run bleibt disabled“).
+    - Inline‑Edit: http_trigger_enabled, http_trigger_base_url, http_trigger_trigger_path (Validierung + atomare INI‑Writes); „Reload Settings“; „Health check“ (GET base+health_path).
+  - Bugfix:
+    - Gtk.Expander.set_expand → GTK4 besitzt diese Methode nicht; Umstellung auf set_hexpand.
+  - UI‑Wrapping:
+    - PRIMARY/Clipboard „Aktuell:“‑Labels und History‑Zeilen umbrechen hart (Pango WrapMode CHAR), set_max_width_chars(80), set_hexpand(True) → verhindert Fensterverbreiterung bei langen Inhalten.
+- Affected files:
+  - src/wbridge/gui_window.py (Actions‑Editor, Settings‑Reload/Inline‑Edit/Health, Wrapping, Bugfix)
+  - src/wbridge/config.py (load_actions_raw, write_actions_config, validate_action_dict, set_integration_settings)
+- Tests (manuell, erfolgreich):
+  - Aktionen: Edit/Save/Duplicate/Delete → Backups erstellt, UI reloaded, Run funktioniert.
+  - Settings: Inline‑Edit/Reload/Health‑Check → Status/Actions aktualisieren sich ohne App‑Neustart; Health zeigt OK/Fehler abhängig vom Dienst.
+  - Lange PRIMARY/Clipboard‑Inhalte → Labels umbrechen, Fenster bleibt stabil.
+- Known limitations / Next:
+  - Formular‑Modus (feldbasiert) für Actions (statt Raw‑JSON).
+  - Triggers‑Editor (alias → action.name) im Actions‑Tab.
+  - Config‑CLI (show‑paths/reset/backup/restore).
+  - Gio.FileMonitor auf settings.ini/actions.json für Auto‑Reload.
+  - Profile‑Shortcuts Uninstall (CLI/UI).
+
+## 2025-08-14 – Profiles/Presets + Witsy + CLI/UI + Docs
+
+- Timestamp: 2025-08-14
+- Scope:
+  - ProfileManager:
+    - Neues Modul src/wbridge/profiles_manager.py mit API list_builtin_profiles/show_profile/install_profile
+    - Merge-/Backup-Strategie für actions.json (Name-Kollisionen), triggers, atomare Writes, Timestamp‑Backups
+    - settings.patch.ini: Patch nur whitelisted Keys in [integration]
+    - Optional: Shortcuts-Installation via Gio.Settings
+    - Laden von Paketressourcen via importlib.resources (Traversable‑kompatibel)
+  - Built-in Profil „Witsy“:
+    - src/wbridge/profiles/witsy/{profile.toml, actions.json, shortcuts.json, settings.patch.ini}
+    - Packaging: pyproject.toml → [tool.setuptools.package-data] "wbridge.profiles" = ["**/*"]
+  - CLI:
+    - Neue Subcommands in src/wbridge/cli.py: profile list/show/install (+ Exit‑Codes 0/2/3)
+  - GUI:
+    - Settings‑Tab: „Integration Status“ (Enabled/Base‑URL/Trigger‑Pfad)
+    - Settings‑Tab: „Profile“-Bereich (Dropdown/Anzeigen/Installieren mit Checkboxen: Actions überschreiben, Settings patchen, Shortcuts installieren, Dry‑run)
+    - Actions‑Tab: Hinweis + Deaktivierung der Run‑Buttons, wenn integration.http_trigger_enabled=false
+  - Shim:
+    - src/wbridge/profiles.py re‑exportiert die API aus profiles_manager.py (verhindert Verwirrung/Legacy‑Imports)
+  - Doku:
+    - DESIGN.md: „Profile Commands (CLI)“, Module‑Layout (profiles_manager + Ressourcen), Packaging‑Hinweis, Checklist erweitert, „Nächste Schritte“ aktualisiert
+    - README.md: „Profiles & Witsy Quickstart“ inkl. Installationsbeispiele und Hinweise
+- Tests (Smoke):
+  - wbridge profile list → ["witsy"]
+  - wbridge profile show --name witsy → ok=true, enthält Metadaten/Actions/Triggers/Shortcuts/Settings‑Patch
+  - wbridge profile install --name witsy --dry-run → ok=true, zeigt geplante Adds/Patches/Backups, keine Writes
+- Known limitations:
+  - UI‑Buttons für GNOME Shortcuts und Autostart sind weiterhin Platzhalter (separater Task)
+  - HTTP‑Actions benötigen optional „requests“; ohne Extra liefern HTTP‑Aktionen einen klaren Fehlermeldungstext
 
 ## 2025-08-12 – History/GUI/IPC enhancements
 
