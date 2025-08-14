@@ -987,3 +987,233 @@ Backend checks
   - Detect backend via type names if needed (e.g., GdkWaylandDisplay).
 
 Documentation/Research
+
+## 25. Profiles & Presets (Konfigurations-Bundles)
+
+Ziele
+- Out-of-the-box Konfigurationen („Profile“) installierbar machen, um wbridge schnell nutzbar zu machen.
+- Ein Profil enthält mindestens: actions.json (inkl. triggers), optional shortcuts.json (empfohlene GNOME‑Shortcuts) und settings.patch.ini (gezieltes Patchen whitelisted Settings).
+- Installation via CLI und UI (Settings‑Tab) mit Backup- und Merge-Strategie; alles lokal im Benutzerkontext.
+
+Begriffe und Dateien
+- Built-in Profile (im Paket ausgeliefert): src/wbridge/profiles/<name>/
+  - profile.toml (Metadaten: name, version, description, includes)
+  - actions.json (Pflicht; HTTP/Shell Actions inkl. triggers)
+  - shortcuts.json (empfohlene GNOME Shortcuts, optional)
+  - settings.patch.ini (optionale Patches, whitelisted Keys)
+- User-Konfiguration:
+  - ~/.config/wbridge/actions.json (User Actions/Triggers)
+  - ~/.config/wbridge/settings.ini (User Settings)
+  - GNOME Custom Shortcuts via Gio.Settings (Install/Remove durch UI/CLI)
+
+Datenformate
+- profile.toml:
+  name = "witsy"
+  version = "1.0.0"
+  description = "Witsy local HTTP trigger integration (PR2)"
+  includes = ["actions.json", "shortcuts.json", "settings.patch.ini"]
+
+- shortcuts.json:
+  {
+    "shortcuts": [
+      { "name": "Bridge: Prompt", "command": "wbridge trigger prompt --from-primary", "binding": "<Ctrl><Alt>p" },
+      { "name": "Bridge: Command", "command": "wbridge trigger command --from-clipboard", "binding": "<Ctrl><Alt>m" },
+      { "name": "Bridge: Show UI", "command": "wbridge ui show", "binding": "<Ctrl><Alt>u" }
+    ]
+  }
+
+- settings.patch.ini (nur whitelisted Keys):
+  [integration]
+  http_trigger_enabled = true
+  http_trigger_base_url = http://127.0.0.1:18081
+  http_trigger_trigger_path = /trigger
+  ; http_trigger_health_path = /health (optional)
+
+ProfileManager (Spezifikation)
+- list_builtin_profiles() -> List[str]
+- show_profile(name: str) -> Dict (Metadaten + Kerninhalte)
+- install_profile(name: str, options) -> Report
+  options:
+    - overwrite_actions: bool (default false)
+    - patch_settings: bool (default false)
+    - install_shortcuts: bool (default false)
+    - dry_run: bool (default false)
+  Verhalten:
+    - actions.json: Merge mit ~/.config/wbridge/actions.json (siehe Merge-Strategie)
+    - settings.patch.ini: gezieltes Patchen erlaubter Keys in settings.ini
+    - shortcuts.json: Installation via Gio.Settings (Konflikte melden; kein hard overwrite)
+    - pro Schritt Backups erstellen; Report mit Änderungen/Backups/Fehlern zurückgeben
+
+CLI-Erweiterungen
+- wbridge profile list
+  - Ausgabe: Liste verfügbarer Profile (z. B. ["witsy"])
+- wbridge profile show --name witsy
+  - Ausgabe: Metadaten und Kerninhalte (Actions/Triggers, Shortcuts, Settings-Patch)
+- wbridge profile install --name witsy [--overwrite-actions] [--patch-settings] [--install-shortcuts] [--dry-run]
+  - Exit-Codes: 0 OK, 2 invalid args, 3 failure
+  - Ausgabe: Zusammenfassung inkl. Pfaden zu Backups
+
+UI (Settings-Tab)
+- Bereich „Profile“:
+  - Auswahl (Dropdown) verfügbarer Profile; Buttons „Anzeigen“, „Installieren…“
+  - Installationsdialog mit Checkboxen:
+    - Actions installieren/überschreiben
+    - Settings patchen
+    - Shortcuts installieren
+  - Ergebnis-/Fehlerlabel (kurze Zusammenfassung)
+- Bereich „Integration Status“:
+  - Anzeige integration.http_trigger_enabled, Base-URL, Trigger-Pfad
+  - Deutlicher Hinweis, wenn disabled → Actions-Tab entsprechend markieren/disable Run
+
+Merge-/Backup-Strategie
+- Backups:
+  - actions.json.bak-YYYYmmdd-HHMMSS (vor Änderungen)
+  - settings.ini.bak-YYYYmmdd-HHMMSS (vor Änderungen)
+- actions.json:
+  - actions: Kollision anhand name
+    - default: User first (keine Überschreibung)
+    - --overwrite-actions: Profil-Action ersetzt vorhandene gleichnamige
+  - triggers: neue hinzufügen; Kollision:
+    - default: User first
+    - --overwrite-actions: überschreiben
+- settings.ini Patch:
+  - Nur Keys in [integration]: http_trigger_enabled, http_trigger_base_url, http_trigger_trigger_path, http_trigger_health_path
+  - default: behalten (User first), nur überschreiben wenn --patch-settings
+- shortcuts:
+  - Installation optional; Konflikte (belegte Bindings) melden; kein erzwungenes Überschreiben
+
+Sicherheit & Fehler
+- Profile liefern nur lokale HTTP-Ziele (127.0.0.1); keine externen Endpunkte per Default-Profil.
+- Kein Retry/Backoff in V1 (konform); klare Fehleranzeigen im CLI/UI.
+- requests ist optional; wenn fehlt, werden http-actions mit klarer Fehlermeldung quittiert.
+
+Implementierungs-Hinweise (Profiles)
+- Built-in Profile Pfade: src/wbridge/profiles/<name>/
+  - Laden via importlib.resources (Python 3.11+):
+    - from importlib.resources import files
+    - base = files("wbridge.profiles").joinpath("witsy")
+- Kollisions-Identität:
+  - Actions: exakter name (case-sensitive 1:1 Vergleich)
+  - Triggers: exakter Alias-Key im triggers-Objekt (case-sensitive)
+- Report-Schema install_profile (Empfehlung für CLI/UI):
+  {
+    "ok": true,
+    "actions": {"added": N1, "updated": N2, "skipped": N3, "backup": "/path/to/actions.json.bak-..."},
+    "settings": {"patched": ["key1","key2"], "skipped": ["key3"], "backup": "/path/to/settings.ini.bak-..."},
+    "shortcuts": {"installed": M1, "skipped": M2},
+    "dry_run": true,
+    "errors": []
+  }
+- UI-Konkretisierung:
+  - Settings‑Tab: Inline‑Bedienelemente (Dropdown „Profil“, Checkboxen „Actions/Settings/Shortcuts“, Button „Installieren“, Ergebnislabel). Kein modaler Dialog nötig.
+  - Actions‑Tab: Wenn integration.http_trigger_enabled=false → Run‑Buttons disabled und kurzer Hinweis „HTTP Trigger disabled – in Settings aktivieren“.
+- Optional-Dependency:
+  - Fehlt requests, liefern http‑Actions einen klaren Fehlertext (z. B. „python-requests is not installed; install the 'http' extra“), der im UI/CLI angezeigt wird.
+
+## 26. Witsy‑Profil (Profile/Preset für Witsy PR2)
+
+Quelle
+- Aus /home/tim/IMPLEMENTATION_WAYLAND_MINIMAL_HTTP.md:
+  - Lokaler HTTP-Server (opt-in), 127.0.0.1, Default-Port 18081
+  - API:
+    - GET /health → { ok: true }
+    - GET /trigger?cmd=...&text=...
+    - POST /trigger { "cmd": "...", "text": "..." }
+  - cmd-Werte: prompt | chat | scratchpad | command | readaloud | transcribe | realtime | studio | forge
+  - Text: für prompt/command optional; für andere üblicherweise ohne text
+
+Actions (Profil actions.json)
+- Mit Text (POST/JSON):
+  - "Witsy: prompt" → POST {cmd:"prompt", text:"{text}"}
+  - "Witsy: command" → POST {cmd:"command", text:"{text}"}
+- Ohne Text (GET):
+  - "Witsy: chat" → GET ?cmd=chat
+  - "Witsy: scratchpad" → GET ?cmd=scratchpad
+  - "Witsy: readaloud" → GET ?cmd=readaloud
+  - "Witsy: transcribe" → GET ?cmd=transcribe
+  - "Witsy: realtime" → GET ?cmd=realtime
+  - "Witsy: studio" → GET ?cmd=studio
+  - "Witsy: forge" → GET ?cmd=forge
+- Gemeinsame URL:
+  - {config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}
+  - Default via settings.patch.ini: http://127.0.0.1:18081 und /trigger
+
+Triggers (Profil)
+{
+  "prompt":   "Witsy: prompt",
+  "command":  "Witsy: command",
+  "chat":     "Witsy: chat",
+  "scratchpad":"Witsy: scratchpad",
+  "readaloud":"Witsy: readaloud",
+  "transcribe":"Witsy: transcribe",
+  "realtime": "Witsy: realtime",
+  "studio":   "Witsy: studio",
+  "forge":    "Witsy: forge"
+}
+
+Shortcuts (Empfehlung shortcuts.json)
+- Prompt (Primary als Quelle): wbridge trigger prompt --from-primary → <Ctrl><Alt>p
+- Command (Clipboard als Quelle): wbridge trigger command --from-clipboard → <Ctrl><Alt>m
+- Show UI: wbridge ui show → <Ctrl><Alt>u
+- Weitere cmd ohne Default-Bindings; können im UI benannt/vorgeschlagen werden.
+
+Settings-Patch (settings.patch.ini)
+[integration]
+http_trigger_enabled = true
+http_trigger_base_url = http://127.0.0.1:18081
+http_trigger_trigger_path = /trigger
+; http_trigger_health_path = /health
+
+Actions‑Tab Verhalten
+- Wenn http_trigger_enabled=false → Run disabled oder deutlicher Hinweis („HTTP Trigger disabled“).
+- Quelle: Clipboard/Primary/Text; bei „Text“ ein Eingabefeld aktiv.
+- Ergebnis: Success/Failed + Message (HTTP‑Status/Fehlertext); bei fehlendem requests klarer Hinweis.
+
+## 27. Testplan (manuell)
+
+Profil-Erkennung/Anzeige
+- CLI: wbridge profile list → enthält „witsy“
+- CLI: wbridge profile show --name witsy → Metadaten + Kerninhalte
+- UI (Settings): Dropdown zeigt „Witsy“; „Anzeigen“ zeigt Kurzinfo
+
+Trockenlauf
+- wbridge profile install --name witsy --dry-run → listet geplante Änderungen (Backups, Merges), keine Schreibzugriffe
+
+Installation Actions/Settings
+- Actions:
+  - wbridge profile install --name witsy --overwrite-actions
+  - Prüfen: ~/.config/wbridge/actions.json enthält „Witsy: …“; triggers vollständig
+  - Backup: actions.json.bak-YYYYmmdd-HHMMSS existiert
+- Settings:
+  - wbridge profile install --name witsy --patch-settings
+  - Prüfen: settings.ini [integration] Werte gesetzt, Backup existiert
+
+Shortcuts
+- wbridge profile install --name witsy --install-shortcuts
+- GNOME Einstellungen: Pfade/Bindings sichtbar; Konflikte werden gemeldet
+
+Actions‑Tab
+- http_trigger_enabled=true; Witsy läuft (Health check):
+  - Quelle=Text → „Hallo Welt“ → Run „Witsy: prompt“ → Success; Witsy‑Log zeigt Request
+  - Quelle=Clipboard → zuvor per CLI/WYSIWYG setzen; Run „Witsy: command“ → Success
+  - Aktion ohne Text (z. B. „Witsy: chat“) → Run → Success
+- Disabled‑Zustand:
+  - http_trigger_enabled=false → Run disabled oder klarer Hinweis
+
+CLI Trigger Smoke‑Tests
+- wbridge trigger prompt --from-primary
+- wbridge trigger chat --from-clipboard (ohne text)
+
+Fehlerfälle
+- Kein requests installiert → http action Failed: „python-requests not installed“ (o. ä.)
+- Witsy nicht aktiv → HTTP Fehler; UI zeigt Failed + Message (HTTPCode/ConnectionError)
+
+Akzeptanzkriterien
+- Witsy‑Profil vollständig installierbar (Actions/Triggers, optional Settings/Shortcuts) mit Backups und Merge nach Regeln.
+- CLI/GUI verhalten sich wie spezifiziert; Actions‑Tab liefert Ergebnisse/Fehler klar aus.
+- Doku-Abschnitte (dieser) enthalten alle notwendigen Informationen zur Umsetzung/Tests.
+
+## 28. Nächste Schritte (Implementierung; Folge-Session)
+- ProfileManager und CLI/GUI‑Integration gemäß Spezifikation implementieren.
+- Witsy‑Profil als built-in Ressource beilegen.
+- README und DESIGN (dieser Abschnitt) ggf. verfeinern, sobald Implementierungsdetails konkret sind.
