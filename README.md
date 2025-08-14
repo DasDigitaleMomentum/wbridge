@@ -233,6 +233,54 @@ Im Settings‑Tab können zentrale Integrationswerte direkt bearbeitet werden:
   - Atomare INI‑Writes (Tempfile + Replace).
   - Einfache Validierung für Base‑URL/Trigger‑Pfad.
 
+## Config‑CLI
+
+Werkzeuge zur Verwaltung der lokalen Konfiguration:
+
+```bash
+# wichtige Pfade anzeigen (optional maschinenlesbar)
+wbridge config show-paths
+wbridge config show-paths --json
+
+# Backups erstellen (Timestamp)
+wbridge config backup --what all      # oder actions|settings
+
+# Reset (löscht Dateien, optional mit Backups)
+wbridge config reset --backup               # beide
+wbridge config reset --keep-actions --backup
+wbridge config reset --keep-settings --backup
+
+# Wiederherstellen aus Backup-Datei
+wbridge config restore --file ~/.config/wbridge/actions.json.bak-YYYYmmdd-HHMMSS
+wbridge config restore --file ~/.config/wbridge/settings.ini.bak-YYYYmmdd-HHMMSS
+```
+
+Exit-Codes: 0 ok, 2 invalid args, 3 failure.
+
+## Auto‑Reload (File Monitor)
+
+Die GUI überwacht `~/.config/wbridge/settings.ini` und `~/.config/wbridge/actions.json`:
+- Änderungen von außen werden automatisch erkannt (Debounce ~200 ms).
+- Die Oberfläche lädt den Status neu (Label-Hinweis „Config reloaded from disk…“).
+- Bei `settings.ini`: Integration‑Status/Enable wird aktualisiert.
+- Bei `actions.json`: Actions‑Liste und Triggers‑Editor werden neu geladen.
+
+## GNOME Shortcuts & Autostart
+
+- Shortcuts installieren/entfernen:
+  - Settings‑Tab → Buttons „GNOME Shortcuts installieren/entfernen“.
+  - Priorität Installation:
+    1) settings.ini [gnome] (`binding_prompt`, `binding_command`, `binding_ui_show`)
+    2) ausgewähltes Profil (shortcuts.json)
+    3) Default‑Empfehlungen (`<Ctrl><Alt>p|m|u`)
+  - Entfernen:
+    - „Empfohlene“ werden zurückgesetzt.
+    - Wenn ein Profil ausgewählt ist, werden dessen Profil‑Shortcuts (deterministischer Suffix `wbridge-<slug>/`) ebenfalls entfernt.
+
+- Autostart:
+  - Settings‑Tab → „Autostart aktivieren/deaktivieren“.
+  - Legt `~/.config/autostart/wbridge.desktop` an/entfernt es (Exec=`wbridge-app`).
+
 ## Project Layout (to be created next)
 
 ```
