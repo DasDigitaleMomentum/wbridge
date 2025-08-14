@@ -840,6 +840,12 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_actions_source_changed(self, _combo: Gtk.ComboBoxText) -> None:
         active_id = self.actions_source.get_active_id() or "clipboard"
         self.actions_text.set_sensitive(active_id == "text")
+        # Liste neu aufbauen, damit die [src=...] Badges in jeder Aktionszeile
+        # die aktuell gewählte Quelle anzeigen.
+        try:
+            self.refresh_actions_list()
+        except Exception:
+            pass
 
     def _get_settings_map(self) -> dict:
         app = self.get_application()
@@ -850,11 +856,25 @@ class MainWindow(Gtk.ApplicationWindow):
             return {}
 
 
-    def _on_action_run_clicked(self, _btn: Gtk.Button, action: dict) -> None:
-        # Determine source and text
-        src_id = self.actions_source.get_active_id() or "clipboard"
+    def _on_action_run_clicked(self, _btn: Gtk.Button, action: dict, override_combo: Optional[Gtk.ComboBoxText] = None, override_entry: Optional[Gtk.Entry] = None) -> None:
+        # Determine source and text (per-row override hat Vorrang, sonst globale Quelle)
+        src_id = None
+        try:
+            if override_combo is not None:
+                ov = override_combo.get_active_id() or "global"
+                if ov != "global":
+                    src_id = ov
+        except Exception:
+            src_id = None
+
+        if not src_id:
+            src_id = self.actions_source.get_active_id() or "clipboard"
+
         if src_id == "text":
-            sel_text = self.actions_text.get_text() or ""
+            if override_entry is not None:
+                sel_text = override_entry.get_text() or ""
+            else:
+                sel_text = self.actions_text.get_text() or ""
             sel_type = "clipboard"
         elif src_id == "primary":
             sel_text = self._cur_primary or ""
@@ -903,6 +923,7 @@ class MainWindow(Gtk.ApplicationWindow):
         title.set_xalign(0.0)
         title.set_wrap(True)
         title.set_hexpand(True)
+        # kompaktes Preview (Quelle-Override wird in der Zeile separat editiert)
         subt = Gtk.Label(label=f"[{typ}] {preview}")
         subt.set_xalign(0.0)
         subt.set_wrap(True)
@@ -927,12 +948,42 @@ class MainWindow(Gtk.ApplicationWindow):
         sc.set_child(tv)
         vbox.append(sc)
 
+        # Quelle (Override) – optional pro Aktion editierbar
+        ovbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        ovlabel = Gtk.Label(label="Quelle (Override):")
+        ovlabel.set_xalign(0.0)
+        ovbox.append(ovlabel)
+
+        ovcombo = Gtk.ComboBoxText()
+        ovcombo.append("global", "Global (oben)")
+        ovcombo.append("clipboard", "Clipboard")
+        ovcombo.append("primary", "Primary")
+        ovcombo.append("text", "Text")
+        ovcombo.set_active_id("global")
+        ovbox.append(ovcombo)
+
+        oventry = Gtk.Entry()
+        oventry.set_placeholder_text("Text für Override=Text …")
+        oventry.set_sensitive(False)
+        oventry.set_hexpand(True)
+        ovbox.append(oventry)
+
+        def _ov_changed(_c):
+            try:
+                oventry.set_sensitive((ovcombo.get_active_id() or "global") == "text")
+            except Exception:
+                pass
+            return False
+        ovcombo.connect("changed", _ov_changed)
+
+        vbox.append(ovbox)
+
         # Buttons: Run / Save / Cancel / Duplicate / Delete
         btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
         run_btn = Gtk.Button(label="Run")
         run_btn.set_sensitive(run_enabled)
-        run_btn.connect("clicked", self._on_action_run_clicked, action)
+        run_btn.connect("clicked", self._on_action_run_clicked, action, ovcombo, oventry)
         btns.append(run_btn)
 
         save_btn = Gtk.Button(label="Save")
