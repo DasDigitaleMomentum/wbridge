@@ -12,6 +12,41 @@ Conventions
 
 ---
  
+## 2025-08-16 – Optional Cleanup CLIs, PATH‑Hinweis in GUI, Doku‑Sync
+
+- Timestamp: 2025-08-16
+- Scope:
+  - CLI – neue Wartungs-/Cleanup‑Kommandos:
+    - profile uninstall --shortcuts-only (entfernt nur Profil‑Shortcuts über deterministische Suffixe)
+    - shortcuts remove --recommended (empfohlene wbridge‑Shortcuts entfernen)
+    - autostart disable (löscht ~/.config/autostart/wbridge.desktop)
+  - CLI – Config‑Utilities:
+    - config show-paths [--json] (wichtige Pfade)
+    - config backup [--what actions|settings|all] (timestamp‑Backups)
+    - config reset [--keep-actions] [--keep-settings] [--backup] (löschen mit optionalem Backup)
+    - config restore --file PATH (Wiederherstellung in Ziel anhand Dateiname/Heuristik)
+  - GUI – Settings PATH‑Hinweis:
+    - Wenn shutil.which("wbridge") None zurückgibt, sichtbarer Hinweis, dass GNOME Shortcuts den Befehl ggf. nicht finden; Empfehlung: absolute Pfade oder korrekter PATH.
+  - Doku‑Sync:
+    - DESIGN.md: neue Sektion „Config and Maintenance Commands (CLI)“ + Änderungsprotokoll 2025‑08‑16
+    - README: Ergänzende Hinweise zu globaler Installation/PATH (separat bereits aktualisiert)
+- Affected files:
+  - src/wbridge/cli.py (neue Subcommands: profile uninstall, shortcuts remove, autostart disable; config show-paths/backup/reset/restore)
+  - src/wbridge/gui_window.py (PATH‑Hinweis in Settings)
+  - src/wbridge/gnome_shortcuts.py (Helper remove_recommended_shortcuts/Binding‑Removal genutzt)
+  - src/wbridge/autostart.py (disable/enable/is_enabled)
+  - DESIGN.md (CLI‑Wartungssektion + Eintrag 2025‑08‑16)
+- Tests (manuell, Smoke):
+  - wbridge profile uninstall --name witsy --shortcuts-only → Profil‑Shortcuts entfernt (wbridge‑… Suffixe)
+  - wbridge shortcuts remove --recommended → OK
+  - wbridge autostart disable → OK/FAILED je nach vorhandener Desktop‑Datei
+  - wbridge config show-paths|backup|reset|restore → Pfade korrekt, Backups erstellt, Restore ersetzt atomar
+  - GUI zeigt PATH‑Hinweis, wenn „wbridge“ nicht im PATH gefunden wird
+- Notes:
+  - Nicht destruktiv per Default; Backups sind timestamped (…bak‑YYYYmmdd‑HHMMSS)
+  - Shortcuts‑Removal ist gezielt; keine Fremd‑Keybindings werden überschrieben
+  - GNOME Custom Shortcuts benötigen ggf. absolute Pfade, wenn „wbridge“ nicht im PATH ist
+
 ## 2025-08-14 – Actions Editor (Raw‑JSON), Settings Inline‑Edit/Health, Wrapping Fix
 
 - Timestamp: 2025-08-14
