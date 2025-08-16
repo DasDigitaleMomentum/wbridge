@@ -281,6 +281,68 @@ Die GUI überwacht `~/.config/wbridge/settings.ini` und `~/.config/wbridge/actio
   - Settings‑Tab → „Autostart aktivieren/deaktivieren“.
   - Legt `~/.config/autostart/wbridge.desktop` an/entfernt es (Exec=`wbridge-app`).
 
+## Global Installation (ohne venv)
+
+Für eine nutzerweite („globale“) Bereitstellung der CLIs (wbridge, wbridge-app) ohne venv empfehlen sich diese Wege:
+
+- Variante A: pipx (empfohlen)
+  - Installation: sudo apt install pipx && pipx ensurepath
+  - Aus diesem Projekt (mit HTTP‑Extra, optional):
+    - pipx install ".[http]"
+  - Prüfen:
+    - which wbridge
+    - which wbridge-app
+  - Vorteil: saubere Isolierung je Tool, Binaries liegen im Benutzer‑PATH (~/.local/bin), GNOME Shortcuts finden sie.
+
+- Variante B: pip --user
+  - Installation:
+    - pip install --user ".[http]"
+  - Achte darauf, dass ~/.local/bin im PATH deiner GNOME‑Session ist (ab-/anmelden kann nötig sein).
+
+Hinweis:
+- Systemweite Installation per sudo pip ist auf Debian/Ubuntu nicht empfohlen (Konflikt mit Paketmanager).
+- GTK/PyGObject kommen weiterhin aus den OS‑Paketen (z. B. apt install python3-gi gir1.2-gtk-4.0).
+
+## Hinweise zu uv
+
+- Entwicklung: uv ist ein schneller Ersatz für venv/pip.
+  - uv venv
+  - . .venv/bin/activate
+  - uv pip install -e ".[http]"
+- Nutzerweit („global“) ist pipx heute meist die klarste Option. uv kann technisch auch --user‑Ziele bedienen (uv pip install --user …), bietet aber erst mit einem veröffentlichten Paket den bequemen Modus „uv tool install wbridge[http]“ (geplant nach Veröffentlichung).
+
+## Troubleshooting – GNOME Shortcuts finden „wbridge“ nicht
+
+- Symptom: Tastenkombination löst nichts aus, obwohl der Shortcut existiert.
+- Ursache: GNOME‑Session‑PATH enthält ggf. nicht ~/.local/bin oder dein venv. 
+- Lösungen:
+  1) Installiere wbridge nutzerweit via pipx/pip --user (siehe „Global Installation“) und melde dich einmal ab/an.
+  2) Alternativ: Öffne GNOME Einstellungen → Tastatur → Benutzerdefinierte Verknüpfungen, wähle den Eintrag („Bridge: Prompt/Command/Show UI“) und ersetze den Command von „wbridge …“ durch den absoluten Pfad, z. B. 
+     /home/USER/.local/bin/wbridge trigger prompt --from-primary
+     oder dein venv‑Pfad.
+- Diagnose:
+  - gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
+  - which wbridge
+  - wbridge-app starten, dann im Terminal testen:
+    wbridge trigger prompt --from-primary
+
+## Uninstall
+
+- Paket deinstallieren
+  - pipx: pipx uninstall wbridge
+  - pip --user: pip uninstall wbridge
+- GNOME Shortcuts entfernen
+  - In der App (Settings‑Tab): „GNOME Shortcuts entfernen“ (empfohlene) und ggf. „Profil‑Shortcuts entfernen“.
+  - Alternativ per GNOME Einstellungen → Tastatur → Benutzerdefinierte Verknüpfungen → manuell löschen.
+- Autostart deaktivieren
+  - In der App: „Autostart deaktivieren“
+  - Manuell: rm ~/.config/autostart/wbridge.desktop
+- Konfiguration/Logs
+  - CLI (solange wbridge vorhanden): wbridge config reset --backup
+  - Manuell: 
+    - rm -f ~/.config/wbridge/settings.ini ~/.config/wbridge/actions.json
+    - rm -f ~/.local/state/wbridge/bridge.log
+
 ## Project Layout (to be created next)
 
 ```
