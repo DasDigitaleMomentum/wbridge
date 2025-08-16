@@ -16,6 +16,7 @@ Run:
 """
 
 import sys
+import time
 
 try:
     import gi
@@ -135,6 +136,39 @@ class BridgeApplication(Gtk.Application):
         if not win:
             win = UIMainWindow(self)
         win.present()
+
+    def bring_to_front(self) -> None:
+        """
+        Bring the main window to the foreground on the GTK main thread.
+        Handles minimized window states best-effort.
+        """
+        def _present():
+            try:
+                win = self.props.active_window
+                if not win:
+                    # ensure a window exists
+                    self.activate()
+                    win = self.props.active_window or UIMainWindow(self)
+                # Try to unminimize/deiconify if supported
+                try:
+                    if hasattr(win, "unminimize"):
+                        win.unminimize()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                # Present window (Wayland compositor may still limit focus stealing)
+                try:
+                    win.present()
+                except Exception:
+                    pass
+                try:
+                    self._logger.info("ui.show presented")
+                except Exception:
+                    pass
+            except Exception as e:
+                self._logger.exception("bring_to_front error: %s", e)
+            return False
+        # schedule on main thread
+        GLib.idle_add(_present, priority=GLib.PRIORITY_DEFAULT)  # type: ignore
 
     # Helper methods (run on main thread via GLib.idle_add when needed)
     def _ensure_display(self) -> object:
@@ -275,18 +309,15 @@ class BridgeApplication(Gtk.Application):
             return {"ok": False, "error": "op missing", "code": "INVALID_ARG"}
 
         if op == "ui.show":
-            # Present window on the GTK main thread
-            def _present():
+            # Present window on the GTK main thread (debounced inside bring_to_front)
+            try:
+                self.bring_to_front()
                 try:
-                    win = self.props.active_window
-                    if not win:
-                        win = UIMainWindow(self)
-                    win.present()
-                except Exception as e:
-                    self._logger.exception("ui.show error: %s", e)
-                return False  # run once
-
-            GLib.idle_add(_present, priority=GLib.PRIORITY_DEFAULT)  # type: ignore
+                    self._logger.info("ui.show scheduled")
+                except Exception:
+                    pass
+            except Exception as e:
+                self._logger.exception("ui.show error: %s", e)
             return {"ok": True, "data": {"op": "ui.show"}}
 
         if op == "selection.set":
@@ -359,7 +390,32 @@ class BridgeApplication(Gtk.Application):
                 settings_map = None
             ctx = ActionContext(text=sel_text, selection_type=sel_type, settings_map=settings_map, extra={"selection.type": sel_type})
 
+            # Logging: start + source
+            try:
+                start = time.monotonic()
+                src_from = None
+                try:
+                    if isinstance(src, dict):
+                        src_from = src.get("from")
+                    else:
+                        src_from = src
+                except Exception:
+                    src_from = None
+                self._logger.info("action.run start name=%s source=%s", name, src_from)
+            except Exception:
+                start = time.monotonic()
+
             ok, message = run_action(action, ctx)
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                l = len(sel_text or "")
+                if ok:
+                    self._logger.info("action.run ok name=%s sel_type=%s len=%d elapsed_ms=%d", name, sel_type, l, elapsed)
+                else:
+                    self._logger.warning("action.run failed name=%s sel_type=%s len=%d elapsed_ms=%d error=%s", name, sel_type, l, elapsed, message)
+            except Exception:
+                pass
+
             if ok:
                 return {"ok": True, "data": {"op": "action.run", "name": name, "result": message}}
             else:
@@ -376,6 +432,10 @@ class BridgeApplication(Gtk.Application):
             target_name = triggers.get(cmd)
             if not target_name:
                 return {"ok": False, "error": f"trigger not found: {cmd}", "code": "NOT_FOUND"}
+            try:
+                self._logger.info("trigger received cmd=%s -> action=%s", cmd, target_name)
+            except Exception:
+                pass
             # reuse action.run path
             sub_req = dict(req)
             sub_req["op"] = "action.run"

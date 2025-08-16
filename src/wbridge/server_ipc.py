@@ -17,6 +17,8 @@ import selectors
 import socket
 import threading
 from typing import Any, Callable, Dict, Optional
+import logging
+import time
 
 from .platform import socket_path
 
@@ -164,10 +166,36 @@ class IPCServer:
                 return
 
     def _handle_line(self, line: bytes) -> Response:
+        logger = logging.getLogger("wbridge")
+        start = time.monotonic()
         try:
             req: Request = json.loads(line.decode("utf-8"))
         except Exception as e:
+            try:
+                logger.warning("ipc.invalid_json error=%r", e)
+            except Exception:
+                pass
             return {"ok": False, "error": f"invalid json: {e}", "code": "INVALID_ARG"}
+
+        # Extract op and useful extras for logging
+        try:
+            op = str(req.get("op", ""))
+        except Exception:
+            op = ""
+        extra = ""
+        try:
+            if op == "trigger":
+                extra = f" cmd={req.get('cmd','')}"
+            elif op == "action.run":
+                extra = f" name={req.get('name','')}"
+        except Exception:
+            pass
+
+        try:
+            logger.info("ipc.request op=%s%s", op, extra)
+        except Exception:
+            pass
+
         try:
             resp = self._handler(req)
             if not isinstance(resp, dict):
@@ -175,6 +203,20 @@ class IPCServer:
             # Ensure ok present
             if "ok" not in resp:
                 resp["ok"] = True
+            ok = bool(resp.get("ok", True))
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                if ok:
+                    logger.info("ipc.response op=%s ok=true elapsed_ms=%d", op, elapsed)
+                else:
+                    logger.warning("ipc.response op=%s ok=false elapsed_ms=%d error=%s", op, elapsed, resp.get("error", ""))
+            except Exception:
+                pass
             return resp
         except Exception as e:
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                logger.exception("ipc.exception op=%s elapsed_ms=%d error=%r", op, elapsed, e)
+            except Exception:
+                pass
             return {"ok": False, "error": str(e), "code": "ACTION_FAILED"}
