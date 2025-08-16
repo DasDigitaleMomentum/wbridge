@@ -50,6 +50,28 @@ Non-Goals
 - Python 3, PyGObject (GTK 4), GLib/Gio available from the distro packages.
 - Network access is not required; if actions target local HTTP endpoints, they must be reachable on localhost.
 
+System Packages & Installation Notes (important)
+- PyGObject/GTK4 must come from your Linux distribution packages (do not try to build via pip).
+- Typical package names by distro:
+  - Debian/Ubuntu:
+    - sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection
+  - Fedora:
+    - sudo dnf install -y python3-gobject gtk4
+  - Arch/Manjaro:
+    - sudo pacman -S --needed python-gobject gtk4
+  - openSUSE:
+    - sudo zypper install -y python3-gobject gtk4
+- Global/user installation of the Python package:
+  - Prefer pipx and ensure the environment can see system packages (PyGObject):
+    - pipx install --system-site-packages "wbridge[http]"      # once published
+    - From source checkout: pipx install --system-site-packages ".[http]"
+  - If using a virtual environment for development:
+    - python3 -m venv --system-site-packages .venv
+    - . .venv/bin/activate && pip install -e ".[http]"
+- Verify GI availability:
+  - python3 -c "import gi; from gi.repository import Gtk, Gdk; print('GI OK', Gtk.get_major_version())"
+- Troubleshooting “No module named 'gi'”:
+  - Install the system packages listed above, then reinstall with pipx --system-site-packages (or re-create venv with --system-site-packages).
 
 ## 3. High-Level Architecture
 

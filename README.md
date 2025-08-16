@@ -22,13 +22,22 @@ For full system design, see DESIGN.md.
 
 ## Requirements
 
-- Linux with Wayland session (GNOME targeted in V1)
+- Linux mit Wayland-Session (GNOME als primäres Ziel in V1)
 - Python 3.10+
-- System packages providing GTK 4 and PyGObject (names vary by distro), for example on Debian/Ubuntu:
-  - `sudo apt install -y python3-gi gir1.2-gtk-4.0`
-- Optional: `requests` (only needed if you enable HTTP actions; can be installed via optional extra)
+- Systempakete für GTK4 und PyGObject (Installationsnamen je Distribution unterschiedlich):
+  - Debian/Ubuntu:
+    - `sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection`
+  - Fedora:
+    - `sudo dnf install -y python3-gobject gtk4`
+  - Arch/Manjaro:
+    - `sudo pacman -S --needed python-gobject gtk4`
+  - openSUSE:
+    - `sudo zypper install -y python3-gobject gtk4`
+- Optional: `requests` (nur nötig, wenn HTTP-Actions genutzt werden; via optionalem Extra installierbar)
 
-Note: GTK/PyGObject are typically installed from distro packages rather than pip.
+Hinweise
+- PyGObject/GTK4 sollten aus den Distributionspaketen kommen (nicht via pip bauen).
+- Das Python, mit dem wbridge läuft, muss `gi` importieren können. Virtuelle Umgebungen ohne System-Site-Packages sehen `python3-gi` nicht.
 
 
 ## Installation (development)
@@ -283,25 +292,29 @@ Die GUI überwacht `~/.config/wbridge/settings.ini` und `~/.config/wbridge/actio
 
 ## Global Installation (ohne venv)
 
-Für eine nutzerweite („globale“) Bereitstellung der CLIs (wbridge, wbridge-app) ohne venv empfehlen sich diese Wege:
+Für eine nutzerweite Bereitstellung der CLIs (wbridge, wbridge-app) ohne venv:
 
-- Variante A: pipx (empfohlen)
-  - Installation: sudo apt install pipx && pipx ensurepath
-  - Aus diesem Projekt (mit HTTP‑Extra, optional):
-    - pipx install ".[http]"
+- Variante A: pipx (empfohlen, mit Systempaketen sichtbar)
+  - Stelle sicher, dass die Systempakete installiert sind (siehe Requirements).
+  - Installation pipx:
+    - `sudo apt install pipx && pipx ensurepath`   # oder äquivalent auf deiner Distro
+  - Installation mit Zugriff auf Systempakete (wichtig für PyGObject):
+    - Aus diesem Projekt:
+      - `pipx install --system-site-packages ".[http]"`
+    - Aus veröffentlichtem Paket (später):
+      - `pipx install --system-site-packages "wbridge[http]"`
   - Prüfen:
-    - which wbridge
-    - which wbridge-app
-  - Vorteil: saubere Isolierung je Tool, Binaries liegen im Benutzer‑PATH (~/.local/bin), GNOME Shortcuts finden sie.
+    - `which wbridge`
+    - `python -c "import gi, sys; from gi.repository import Gtk; print('ok', Gtk.get_major_version())"`
 
 - Variante B: pip --user
-  - Installation:
-    - pip install --user ".[http]"
-  - Achte darauf, dass ~/.local/bin im PATH deiner GNOME‑Session ist (ab-/anmelden kann nötig sein).
+  - `pip install --user ".[http]"`
+  - Stelle sicher, dass `~/.local/bin` im PATH deiner GNOME‑Session ist (ggf. ab-/anmelden).
 
-Hinweis:
-- Systemweite Installation per sudo pip ist auf Debian/Ubuntu nicht empfohlen (Konflikt mit Paketmanager).
-- GTK/PyGObject kommen weiterhin aus den OS‑Paketen (z. B. apt install python3-gi gir1.2-gtk-4.0).
+Wichtig
+- pipx ohne `--system-site-packages` erstellt eine isolierte venv, in der `gi` nicht verfügbar ist → Fehler „No module named 'gi'“.
+- Systemweite Installation mit `sudo pip` wird nicht empfohlen (Konflikte mit dem Paketmanager).
+- PyGObject/GTK4 weiterhin über OS‑Pakete (z. B. `apt install python3-gi gir1.2-gtk-4.0`).
 
 ## Hinweise zu uv
 
@@ -325,6 +338,29 @@ Hinweis:
   - which wbridge
   - wbridge-app starten, dann im Terminal testen:
     wbridge trigger prompt --from-primary
+
+## Troubleshooting – 'No module named gi'
+
+Symptom
+- Beim Starten erscheint: „Error: GTK4/PyGObject not available … No module named 'gi'“.
+
+Ursache
+- Das Python‑Environment sieht die Systempakete (python3‑gi/GTK4) nicht.
+
+Lösung
+1) Systempakete installieren (siehe Requirements).
+2) Wenn mit pipx installiert:
+   - `pipx uninstall wbridge`
+   - `pipx install --system-site-packages ".[http]"`    # oder später: `pipx install --system-site-packages "wbridge[http]"`
+3) Wenn mit venv entwickelt:
+   - venv mit System‑Site‑Packages neu erstellen:
+     - `deactivate` (falls aktiv)
+     - `python3 -m venv --system-site-packages .venv`
+     - `. .venv/bin/activate`
+     - `pip install -e ".[http]"`
+4) Verifikation:
+   - `python3 -c "import gi; from gi.repository import Gtk, Gdk; print('GI OK', Gtk.get_major_version())"`
+   - `wbridge-app` starten; Terminal‑Fehler sollten verschwinden.
 
 ## Uninstall
 
