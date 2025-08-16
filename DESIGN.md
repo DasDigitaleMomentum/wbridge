@@ -289,6 +289,29 @@ Notes
   - wbridge profile install --name witsy --patch-settings --overwrite-actions --dry-run
 
 
+### Config and Maintenance Commands (CLI)
+
+Subcommands
+- Show important paths:
+  - wbridge config show-paths [--json]
+- Backup config files (timestamped):
+  - wbridge config backup [--what actions|settings|all]
+- Reset config files (delete with optional backup):
+  - wbridge config reset [--keep-actions] [--keep-settings] [--backup]
+- Restore from backup file:
+  - wbridge config restore --file PATH
+- Remove profile-installed shortcuts only:
+  - wbridge profile uninstall --name NAME --shortcuts-only
+- Remove recommended shortcuts:
+  - wbridge shortcuts remove --recommended
+- Disable autostart:
+  - wbridge autostart disable
+
+Notes
+- Exit Codes: 0 OK, 2 invalid args, 3 failure.
+- No destructive default without explicit flags; backups are timestamped.
+- GNOME bindings may require an absolute path to "wbridge" if it is not found in PATH.
+
 ## 8. GNOME Custom Shortcuts (Automation)
 
 Concept
@@ -1386,3 +1409,32 @@ Tests (Kurz)
 - Aktionen editieren/speichern/duplizieren/löschen → Backups angelegt, Liste reloaded, Run funktioniert.
 - Settings Inline‑Edit/Reload/Health‑Check → Status/Actions aktualisieren sich ohne App‑Neustart.
 - Lange PRIMARY/Clipboard‑Inhalte → Labels umbrechen, Fenster bleibt stabil.
+
+## 31. Änderungen 2025‑08‑16 (Optionales Cleanup + PATH‑Hinweis)
+
+Kurzüberblick
+- CLI – Wartungs-/Cleanup-Befehle ergänzt:
+  - profile uninstall --shortcuts-only
+  - shortcuts remove --recommended
+  - autostart disable
+- Config-CLI erweitert:
+  - config show-paths [--json]
+  - config backup [--what actions|settings|all]
+  - config reset [--keep-actions] [--keep-settings] [--backup]
+  - config restore --file PATH
+- GUI – Settings PATH-Hinweis:
+  - Wenn shutil.which("wbridge") None ergibt, wird ein Hinweis angezeigt, dass GNOME Custom Shortcuts den Befehl ggf. nicht finden (absolute Pfade empfohlen).
+
+Details
+- Die zusätzlichen CLI-Kommandos sind nicht destruktiv per Default; Backups sind timestamped (…bak-YYYYmmdd-HHMMSS).
+- Shortcuts-Entfernung wirkt nur auf die vordefinierten bzw. profilinstallierten Suffixe, andere benutzerdefinierte Bindings bleiben unberührt.
+- Autostart disable entfernt ~/.config/autostart/wbridge.desktop atomar.
+
+Smoke-Tests (manuell)
+- wbridge profile uninstall --name witsy --shortcuts-only → entfernt Profil-Shortcuts (Suffixe wbridge-…/)
+- wbridge shortcuts remove --recommended → OK
+- wbridge autostart disable → OK/FAILED abhängig von existierender Desktop-Datei
+- wbridge config show-paths|backup|reset|restore → Pfade/Backups/Restore geprüft
+
+Doku-Hinweis
+- README sollte einen kurzen „PATH/absolute Pfade“-Hinweis enthalten, damit GNOME Shortcuts „wbridge“ sicher finden.
