@@ -1,0 +1,63 @@
+/*
+  wbridge GTK4 application styles
+  - Provide subtle visual hierarchy
+  - Ensure stable, compact layouts
+  - Keep theme-agnostic by relying on opacity/margins instead of hard colors
+*/
+
+/* Dimmed secondary text for subtitles/previews in lists */
+.dim-label {
+  opacity: 0.6; /* works across themes without hardcoding color */
+}
+
+/* Headings and section labels get a bit more breathing room */
+label {
+  /* default GTK has decent typography; avoid font-size changes */
+}
+
+/* Expander (Help panels) spacing */
+expander {
+  margin-top: 12px;
+}
+
+/* Labels inside frames, grids and forms */
+frame > label.title,
+frame > label {
+  opacity: 0.9;
+}
+
+/* Generic margins for common containers (boxes already have margins from code) */
+scrolledwindow {
+  margin-top: 4px;
+}
+
+/* TextView readability */
+textview {
+  padding: 6px;
+}
+
+/* Buttons in tool rows */
+button {
+  min-height: 26px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* List rows tighter vertically */
+list view,
+listrow,
+list {
+  /* keep defaults; compactness is controlled by row_spacing in code */
+}
+
+/* Grid cells balance */
+grid {
+  /* spacing is set in code: column_spacing/row_spacing */
+}
+
+/* Status page log area */
+textview.log {
+  /* Taggable via adding a style class in code if needed:
+     self.log_tv.get_style_context().add_class("log") */
+  background-color: transparent;
+}
