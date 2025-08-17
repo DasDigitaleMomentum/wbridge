@@ -468,7 +468,7 @@ Package name suggestion: `wbridge` (generic)
 
 - wbridge/app.py
   - Gtk.Application initialization
-  - Builds main window (tabs: History, Actions, Settings, Status)
+  - Builds main window (left StackSidebar + Stack pages: History, Actions, Triggers, Shortcuts, Settings, Status)
   - Starts IPC server (Unix socket)
   - Logging setup
 
@@ -523,9 +523,10 @@ Package name suggestion: `wbridge` (generic)
   - profile.toml, actions.json, shortcuts.json, settings.patch.ini (werden via importlib.resources geladen)
 
 Packaging
-- pyproject.toml enthält Paket‑Daten für Profile:
+- pyproject.toml enthält Paket‑Daten:
   - [tool.setuptools.package-data]
     "wbridge.profiles" = ["**/*"]
+    "wbridge" = ["help/**/*", "assets/**/*"]
 
 
 ## 12. Logging and Diagnostics
@@ -569,7 +570,7 @@ Phase 1 – IPC + CLI
 - Implement CLI subcommands: ui show, selection get/set, history list/apply/swap.
 
 Phase 2 – History + GUI
-- Implement GTK window with tabs:
+- Implement GUI with left‑side StackSidebar/Stack pages:
   - History (clipboard/primary lists, context menu)
   - Actions (basic CRUD for actions.json, test button)
   - Settings (integration URL, GNOME shortcuts, autostart)
@@ -1014,7 +1015,7 @@ IPC + CLI
 - [x] CLI: `history list/apply/swap`
 
 History + GUI
-- [x] GTK window with tabs (History, Actions, Settings, Status)
+- [x] GTK window with left StackSidebar/Stack pages (History, Actions, Triggers, Shortcuts, Settings, Status)
 - [x] Clipboard/Primary monitoring wired
 - [x] History context actions (promote to clipboard/primary, swap)
 
@@ -1031,9 +1032,9 @@ Profiles & Presets
 - [x] Actions‑Tab: Hinweis/Disable bei http_trigger_enabled = false
 
 GNOME Integration + Autostart
-- [ ] GNOME Custom Shortcuts create/update/remove (Gio.Settings)
-- [ ] Autostart desktop file create/remove
-- [ ] Suggested shortcuts installable from UI
+- [x] GNOME Custom Shortcuts create/update/remove (Gio.Settings)
+- [x] Autostart desktop file create/remove
+- [x] Suggested shortcuts installable from UI
 
 Configuration
 - [x] settings.ini handling
