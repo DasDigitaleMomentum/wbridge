@@ -29,12 +29,14 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from .platform import xdg_config_dir, xdg_state_dir, autostart_desktop_path
+from . import gnome_shortcuts, autostart
 
 from .client_ipc import send_request, cli_exit_code_from_response
 from .profiles_manager import (
     list_builtin_profiles as profiles_list,
     show_profile as profiles_show,
     install_profile as profiles_install,
+    remove_profile_shortcuts,
 )
 
 
@@ -305,6 +307,47 @@ def cmd_config_restore(args: argparse.Namespace) -> int:
         return 3
 
 
+def cmd_profile_uninstall(args: argparse.Namespace) -> int:
+    name = args.name
+    if not name:
+        print("--name is required", file=sys.stderr)
+        return 2
+    # for now only shortcuts-only is supported
+    if not args.shortcuts_only:
+        print("profile uninstall currently supports only --shortcuts-only", file=sys.stderr)
+        return 2
+    try:
+        rep = remove_profile_shortcuts(name)
+        print(json.dumps({"ok": True, "name": name, "report": rep}, ensure_ascii=False, indent=2))
+        return 0
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
+def cmd_shortcuts_remove(args: argparse.Namespace) -> int:
+    if not args.recommended:
+        print("specify --recommended to remove recommended shortcuts", file=sys.stderr)
+        return 2
+    try:
+        gnome_shortcuts.remove_recommended_shortcuts()
+        print("OK: recommended shortcuts removed")
+        return 0
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
+def cmd_autostart_disable(_args: argparse.Namespace) -> int:
+    try:
+        ok = autostart.disable()
+        print("OK" if ok else "FAILED")
+        return 0 if ok else 3
+    except Exception as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wbridge", description="Selection/Shortcut Bridge CLI")
     sub = p.add_subparsers(dest="sub")
@@ -374,6 +417,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_prof_install.add_argument("--install-shortcuts", action="store_true", help="install recommended GNOME shortcuts from the profile")
     p_prof_install.add_argument("--dry-run", action="store_true", help="do not write files; print planned changes")
     p_prof_install.set_defaults(func=cmd_profile_install)
+
+    p_prof_uninstall = sub_prof.add_parser("uninstall", help="uninstall profile artifacts")
+    p_prof_uninstall.add_argument("--name", required=True, help="profile name (e.g., witsy)")
+    p_prof_uninstall.add_argument("--shortcuts-only", action="store_true", help="remove shortcuts installed by the profile")
+    p_prof_uninstall.set_defaults(func=cmd_profile_uninstall)
+
+    # shortcuts
+    p_sc = sub.add_parser("shortcuts", help="shortcuts utilities")
+    sub_sc = p_sc.add_subparsers(dest="sub_sc")
+    p_sc_rm = sub_sc.add_parser("remove", help="remove shortcuts")
+    p_sc_rm.add_argument("--recommended", action="store_true", help="remove recommended shortcuts")
+    p_sc_rm.set_defaults(func=cmd_shortcuts_remove)
+
+    # autostart
+    p_as = sub.add_parser("autostart", help="autostart utilities")
+    sub_as = p_as.add_subparsers(dest="sub_as")
+    p_as_disable = sub_as.add_parser("disable", help="disable autostart")
+    p_as_disable.set_defaults(func=cmd_autostart_disable)
 
     # config
     p_cfg = sub.add_parser("config", help="configuration utilities")

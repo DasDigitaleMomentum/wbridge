@@ -21,6 +21,7 @@ from gi.repository import Gtk, Gdk, Gio, GLib, GObject  # type: ignore
 from gi.repository import Pango  # type: ignore
 from typing import Optional, Callable, cast
 import logging
+import shutil
 
 from .platform import active_env_summary, socket_path, xdg_state_dir, xdg_config_dir
 from .config import (
@@ -318,6 +319,17 @@ class MainWindow(Gtk.ApplicationWindow):
         settings_desc.set_wrap(True)
         settings_desc.set_xalign(0.0)
         settings_box.append(settings_desc)
+
+        # PATH-Hinweis: Wenn 'wbridge' nicht im PATH gefunden wird, funktionieren GNOME-Shortcuts evtl. nicht.
+        self.path_hint = Gtk.Label(label="")
+        self.path_hint.set_wrap(True)
+        self.path_hint.set_xalign(0.0)
+        try:
+            if shutil.which("wbridge") is None:
+                self.path_hint.set_text("Hinweis: 'wbridge' wurde nicht im PATH gefunden. GNOME Shortcuts rufen 'wbridge' auf; installiere nutzerweit via pipx/pip --user oder trage in den Shortcuts den absoluten Pfad ein.")
+        except Exception:
+            pass
+        settings_box.append(self.path_hint)
 
         # Basisinfos
         info_grid = Gtk.Grid(column_spacing=12, row_spacing=6)
