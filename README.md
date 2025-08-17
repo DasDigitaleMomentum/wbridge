@@ -1,67 +1,108 @@
 # wbridge
 
-General-purpose selection and shortcut bridge for Linux Wayland desktops, built with GTK4/GDK. One repository, one Python package, two entry points:
+General‑purpose selection and shortcut bridge for Wayland desktops (GNOME‑first) built with GTK4/PyGObject. One repository, one Python package, two entry points:
 - `wbridge` (CLI): Talks to the running app via IPC (Unix domain socket).
-- `wbridge-app` (GUI): GTK4 application providing selection history, actions, and settings.
+- `wbridge-app` (GUI): GTK4 application providing selection history, actions, triggers, shortcuts, settings, and status/log.
 
-No global key grabbing (use GNOME Custom Shortcuts to execute the CLI), no headless hidden window, no tray, no wl-clipboard dependency.
+Design guardrails:
+- Left‑side navigation: Gtk.StackSidebar + Gtk.Stack (no Notebook tabs)
+- Help panel on every page (collapsible), content loaded from resource files (English by default)
+- i18n prepared via gettext (domain `wbridge`, fallback to English)
+- GNOME shortcuts: only wbridge‑managed entries editable (prefix `wbridge-`); foreign entries read‑only
 
 
-## Features (V1 scope)
+## Table of Contents
 
-- GTK4/GDK-based monitoring for Clipboard and Primary Selection
-- History (ring buffer), promote any item to Clipboard/Primary, swap last two
-- Actions engine (HTTP or shell) with placeholders like `{text}`, `{text_url}`
-- IPC server (Unix domain socket), CLI client (`wbridge`) to trigger actions and manage history/selection
-- GNOME integration via Custom Shortcuts (programmatically manageable with Gio.Settings)
+- [Features](#features)
+- [UI Overview](#ui-overview)
+- [Requirements](#requirements)
+- [Install (development)](#install-development)
+- [Running](#running)
+- [Pages in Detail](#pages-in-detail)
+  - [History](#history)
+  - [Actions (Master‑Detail)](#actions-master-detail)
+  - [Triggers](#triggers)
+  - [Shortcuts](#shortcuts)
+  - [Settings](#settings)
+  - [Status & Log](#status--log)
+- [Help & i18n](#help--i18n)
+- [GNOME custom shortcuts (concept)](#gnome-custom-shortcuts-concept)
+- [Configuration](#configuration)
+- [Profiles & Witsy Quickstart](#profiles--witsy-quickstart)
+- [CLI overview](#cli-overview)
+- [CSS & Theming](#css--theming)
+- [File Monitors & Auto‑Reload](#file-monitors--auto-reload)
+- [Troubleshooting](#troubleshooting)
+- [Project Layout](#project-layout)
+- [Changelog / Implementation Log](#changelog--implementation-log)
+- [License](#license)
+
+
+## Features
+
+- Wayland‑friendly selection monitoring (GTK4/GDK only; no wl‑clipboard)
+- Dual history rings: Clipboard and Primary Selection
+  - Apply a history item back to Clipboard or Primary
+  - Swap the latest two items (toggle flow)
+- Actions engine (HTTP or Shell) with placeholders like `{text}` / `{text_url}`
+- Triggers map aliases (e.g. `prompt`) to actions
+- IPC server (Unix domain socket) + CLI client (`wbridge`)
+- GNOME integration via Custom Shortcuts (no key grabbing)
 - Autostart via desktop entry
-- Optional: generic local HTTP trigger configuration (no product coupling)
+- Optional local HTTP trigger integration via config
+- Per‑page collapsible Help panels (resource files)
+- i18n setup (gettext; English default; fallback safe)
+- CSS loaded from resources for subtle UI polish
 
-For full system design, see DESIGN.md.
+
+## UI Overview
+
+Navigation uses a left‑side Gtk.StackSidebar + Gtk.Stack (replaces tabs). Pages:
+- History (Clipboard / Primary)
+- Actions (Master‑Detail editor: list on the left, shared editor on the right)
+- Triggers (Alias → Action mapping)
+- Shortcuts (GNOME Custom Keybindings)
+- Settings (Integration, Profiles, Autostart, PATH hints)
+- Status & Log (Environment info + log tail)
+
+Each page provides a collapsible “Help” panel with detailed guidance (English by default).
 
 
 ## Requirements
 
-- Linux mit Wayland-Session (GNOME als primäres Ziel in V1)
+- Linux Wayland session (GNOME primary target)
 - Python 3.10+
-- Systempakete für GTK4 und PyGObject (Installationsnamen je Distribution unterschiedlich):
-  - Debian/Ubuntu:
-    - `sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection`
-  - Fedora:
-    - `sudo dnf install -y python3-gobject gtk4`
-  - Arch/Manjaro:
-    - `sudo pacman -S --needed python-gobject gtk4`
-  - openSUSE:
-    - `sudo zypper install -y python3-gobject gtk4`
-- Optional: `requests` (nur nötig, wenn HTTP-Actions genutzt werden; via optionalem Extra installierbar)
+- System packages (names vary by distribution):
+  - Debian/Ubuntu: `sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection`
+  - Fedora: `sudo dnf install -y python3-gobject gtk4`
+  - Arch/Manjaro: `sudo pacman -S --needed python-gobject gtk4`
+  - openSUSE: `sudo zypper install -y python3-gobject gtk4`
+- Optional extra for HTTP actions: `requests` (install via `.[http]`)
 
-Hinweise
-- PyGObject/GTK4 sollten aus den Distributionspaketen kommen (nicht via pip bauen).
-- Das Python, mit dem wbridge läuft, muss `gi` importieren können. Virtuelle Umgebungen ohne System-Site-Packages sehen `python3-gi` nicht.
+Notes
+- Install GTK/PyGObject from your distro packages (do not try to build via pip).
+- The Python you use must be able to `import gi`; virtualenvs typically need `--system-site-packages`.
 
 
-## Installation (development)
+## Install (development)
 
 Using pip (system or venv):
 
 ```bash
-# create and activate a virtual environment (recommended)
-python3 -m venv .venv
+# venv (recommended)
+python3 -m venv --system-site-packages .venv
 . .venv/bin/activate
 
-# install in editable mode; requests only if you need HTTP actions
+# editable install; add [http] if you need HTTP actions
 pip install -e ".[http]"
-# or without http extra:
+# or:
 # pip install -e .
 ```
 
 Using uv (optional):
 
 ```bash
-# install uv if you don't have it
-# curl -LsSf https://astral.sh/uv/install.sh | sh
-
-uv venv
+uv venv --system-site-packages
 . .venv/bin/activate
 uv pip install -e ".[http]"
 ```
@@ -69,13 +110,19 @@ uv pip install -e ".[http]"
 
 ## Running
 
-GUI:
+GUI (if installed as entry point):
 
 ```bash
 wbridge-app
 ```
 
-CLI examples (will connect to the app via IPC):
+GUI (from source checkout):
+
+```bash
+PYTHONPATH=src python3 -m wbridge.app
+```
+
+CLI examples:
 
 ```bash
 # show the GUI window (bring to front)
@@ -84,79 +131,99 @@ wbridge ui show
 # list last 10 clipboard entries
 wbridge history list --which clipboard --limit 10
 
-# apply the second latest primary selection entry to Clipboard
+# apply second latest clipboard entry
 wbridge history apply --which clipboard --index 1
 
 # trigger a named action using current primary selection
 wbridge trigger prompt --from-primary
 ```
 
-Note: In fresh scaffolding, the IPC and GUI stubs may be minimal. Implement features per DESIGN.md sections and the implementation checklist.
+
+## Pages in Detail
+
+### History
+- Two panes: Clipboard and Primary Selection
+- Per pane:
+  - Current value (single‑line preview, ellipsized)
+  - Set/Get helpers (quick tests)
+  - “Swap last two”
+  - Scrollable history (newest first); apply buttons per row (Set as Clipboard/Primary)
+- Periodic refresh; manual “Refresh” button
+- Help panel topic: `history`
+
+### Actions (Master‑Detail)
+- Source selection: Clipboard / Primary / Text
+- Left: actions list (name + preview)
+- Right: shared editor with two tabs:
+  - Form (recommended): Name, Type (http/shell); HTTP fields (Method, URL); Shell fields (Command, Args JSON, Use shell)
+  - JSON (advanced): raw action JSON
+- Buttons: Save (Form), Save (JSON), Duplicate, Delete, Cancel, Run
+- Validation & atomic persistence to `~/.config/wbridge/actions.json` with timestamped backups
+- If HTTP trigger integration is disabled, Run is disabled and a hint is shown
+- Help panel topic: `actions`
+
+### Triggers
+- Dedicated page to manage alias → action name
+- Add rows, delete rows, Save Triggers
+- Validation: alias non‑empty/unique; action must exist
+- Help panel topic: `triggers`
+
+### Shortcuts
+- GNOME Custom Keybindings overview
+- Policy:
+  - Only wbridge‑scope entries are editable/deletable (path suffix `wbridge-.../`)
+  - Optional “Show all custom (read‑only)” to audit foreign entries
+  - Conflicts summarized (e.g., `'<Ctrl><Alt>p' ×2`)
+  - Deterministic suffix generation/re‑naming
+  - PATH hint if `wbridge` is not found
+- Buttons: Add (wbridge scope), Save, Reload
+- Help panel topic: `shortcuts`
+
+### Settings
+- Environment / backend info (GDK Display; IPC Socket; Log file path)
+- Integration (inline edit):
+  - Enable HTTP trigger
+  - Base URL (http/https), Trigger Path (/trigger)
+  - Save / Discard / Reload Settings / Health check
+- Profiles:
+  - Built‑in profiles (e.g., “witsy”): show/install with options (overwrite actions, patch settings, install shortcuts, dry‑run)
+- GNOME Shortcuts: install/remove recommended set (priority: settings.ini bindings → profile → defaults)
+- Autostart: enable/disable
+- PATH hints if `wbridge` is not found
+- Help panel topic: `settings`
+
+### Status & Log
+- Environment summary and backend info
+- Log tail viewer (`~/.local/state/wbridge/bridge.log`) with “Refresh”
+- Help panel topic: `status`
 
 
-## Repository setup under GitHub Organization
+## Help & i18n
 
-You will create the repository under the organization:
-
-- Organization: `DasDigitaleMomentum`
-- Suggested repo name: `wbridge`
-- Visibility: public (or private if preferred)
-- License: MIT
-- Default branch: `main`
-- Recommended protections/policies:
-  - Branch protection on `main` (PRs required, optional reviews)
-  - Dependabot alerts/updates enabled
-  - Secret scanning enabled
-  - CODEOWNERS (e.g., `@DasDigitaleMomentum/maintainers`)
-
-After you create the empty repo in the Org, run locally in this project root:
-
-```bash
-git init -b main
-git add .
-git commit -m "chore: scaffold wbridge (CLI+GUI in one package)"
-git remote add origin git@github.com:DasDigitaleMomentum/wbridge.git
-git push -u origin main
-```
-
-Adjust remote URL if you choose a different repository name or HTTPS instead of SSH.
+- Per‑page Help panels load Markdown from package resources:
+  - `src/wbridge/help/en/{history,actions,triggers,shortcuts,settings,status}.md`
+- i18n via gettext:
+  - Domain: `wbridge`
+  - Fallback: English when translations are not shipped
+  - UI strings wrapped with `_()` in code
+- Translators can ship `.mo` files later (set `localedir` accordingly if bundling translations).
 
 
 ## GNOME custom shortcuts (concept)
 
-Use GNOME Custom Shortcuts to execute the CLI commands globally. Example bindings:
-
-- Prompt action: `wbridge trigger prompt --from-primary`
-- Command action: `wbridge trigger command --from-clipboard`
+Use GNOME Custom Shortcuts to execute CLI commands globally. Example bindings:
+- Prompt: `wbridge trigger prompt --from-primary`
+- Command: `wbridge trigger command --from-clipboard`
 - Show UI: `wbridge ui show`
 
-These can be added via the GNOME Settings UI or programmatically via Gio.Settings. See DESIGN.md for detailed keys and code snippet examples.
-
-
-## Autostart
-
-Create/remove `~/.config/autostart/wbridge.desktop` with:
-
-```
-[Desktop Entry]
-Type=Application
-Name=Selection/Shortcut Bridge
-Exec=wbridge-app
-X-GNOME-Autostart-enabled=true
-OnlyShowIn=GNOME;X-GNOME;X-Cinnamon;XFCE;
-```
-
-Automation helpers will be provided in the code (`autostart.py`), per DESIGN.md.
+See also the Shortcuts page policy above. Programmatic setup via Gio.Settings is supported in code (install/remove recommended set).
 
 
 ## Configuration
 
 Config dir: `~/.config/wbridge/`
-
 - `settings.ini` (general)
 - `actions.json` (action definitions)
-
-Example profile for a local HTTP trigger endpoint is provided in DESIGN.md (Section “Example Config Profile”). Keep it empty/disabled if you don’t use a local trigger service.
 
 Install optional HTTP extra for requests support:
 
@@ -167,249 +234,112 @@ pip install -e ".[http]"
 
 ## Profiles & Witsy Quickstart
 
-Voraussetzungen
-- Optionales HTTP-Extra für HTTP-Aktionen: `pip install -e ".[http]"` (oder ohne `-e`).
-- Ein lokaler HTTP-Trigger muss erreichbar sein, wenn du die Witsy‑Aktionen nutzen willst (Default: http://127.0.0.1:18081/trigger).
+Prerequisites:
+- Optional HTTP extra (`.[http]`) if you plan to use HTTP actions.
 
-Profile auflisten/anzeigen
+List/show:
 ```bash
 wbridge profile list
 wbridge profile show --name witsy
 ```
 
-Profil installieren (in die User‑Konfiguration)
+Install:
 ```bash
-# Dry-run (zeigt geplante Änderungen ohne zu schreiben)
+# dry-run (preview)
 wbridge profile install --name witsy --dry-run
 
-# Installation mit Überschreiben gleichnamiger Actions/Trigger und Settings‑Patch:
-wbridge profile install --name witsy --patch-settings --overwrite-actions
-
-# Optional: empfohlene GNOME‑Shortcuts des Profils mitinstallieren
-wbridge profile install --name witsy --install-shortcuts
+# install with overwrite/patch and recommended shortcuts
+wbridge profile install --name witsy --overwrite-actions --patch-settings --install-shortcuts
 ```
 
-Hinweise
-- Einstellungen: Im GUI → Settings‑Tab → „Integration Status“ prüfen:
-  - integration.http_trigger_enabled, Base‑URL, Trigger‑Pfad
-- Actions‑Tab: Wenn `http_trigger_enabled=false`, werden Run‑Buttons deaktiviert und ein Hinweis angezeigt („HTTP Trigger disabled – in Settings aktivieren“).
-- Shortcuts: Profil‑Shortcuts können optional über `--install-shortcuts` installiert werden. Die allgemeinen UI‑Buttons für Shortcuts sind derzeit Platzhalter.
+Notes
+- Settings appear in GUI → Settings → Integration Status; use Health check to verify your local endpoint.
+- Actions Run is disabled if HTTP trigger is disabled.
 
-## Actions & Triggers Editor
 
-Der Actions‑Tab zeigt alle Aktionen aus `~/.config/wbridge/actions.json` und ermöglicht Bearbeitung sowie Tests:
+## CLI overview
 
-- Darstellung
-  - Jede Aktion als Expander mit Kopfzeilen‑Preview (HTTP: `METHOD URL`, Shell: `command`).
-  - Im Expander: Raw‑JSON‑Editor (monospaced).
-- Buttons je Aktion
-  - Run: führt die Aktion mit der gewählten Quelle (Clipboard/Primary/Text) aus.
-  - Save: parst/validiert die JSON‑Definition und speichert atomar in `actions.json`. Vorher wird eine Timestamp‑Sicherung (`actions.json.bak-YYYYmmdd-HHMMSS`) angelegt. Die Liste wird neu geladen.
-  - Cancel: verwirft lokale Änderungen und lädt die Datei neu.
-  - Duplicate: legt eine Kopie mit eindeutigem Namen an (z. B. „(copy)”).
-  - Delete: löscht die Aktion; zugehörige Trigger‑Einträge werden entfernt.
-- Add Action
-  - Fügt eine Standard‑HTTP‑Aktion (GET, leere URL) hinzu. Speicherung erfolgt atomar, die Liste wird neu geladen.
-- Triggers‑Editor (unterhalb der Liste)
-  - Alias → Action‑Zuordnung (Alias als Entry, Action als ComboBox).
-  - „Add Trigger“, „Save Triggers“, „Delete“ pro Zeile.
-  - Validierung: keine doppelten Aliase; Action‑Name muss existieren.
-- Hinweise
-  - `http_trigger_enabled=false` deaktiviert die Run‑Buttons. Editieren/Speichern bleibt möglich.
-  - Beim Umbenennen einer Aktion aktualisiert der Editor Trigger nicht automatisch. Passen Sie Aliase bei Bedarf im Triggers‑Editor an.
+Representative subcommands:
+- `wbridge ui show`
+- `wbridge history list|apply|swap`
+- `wbridge selection get|set`
+- `wbridge trigger <alias> [--from-clipboard|--from-primary|--text "..."]`
+- `wbridge profile list|show|install [--dry-run]`
+- Config helpers (optional): `config show-paths|backup|reset|restore`
+- Shortcuts helpers (optional): `shortcuts remove --recommended`
+- Autostart (optional): `autostart disable`
 
-## Settings Inline‑Edit & Health‑Check
+Exit codes: 0 success; 1 general/server not running; 2 invalid args; 3 action failed
 
-Im Settings‑Tab können zentrale Integrationswerte direkt bearbeitet werden:
 
-- Inline‑Edit (Whitelist)
-  - `integration.http_trigger_enabled` (Switch)
-  - `integration.http_trigger_base_url` (Entry, muss mit http/https beginnen)
-  - `integration.http_trigger_trigger_path` (Entry, muss mit `/` beginnen)
-- Speichern/Verwerfen/Reload Settings
-  - Änderungen werden atomar in `~/.config/wbridge/settings.ini` geschrieben (Tempfile + Replace) und anschließend sofort im UI reflektiert.
-  - „Reload Settings“ lädt die Datei manuell neu (nützlich nach CLI‑Änderungen).
-- Health‑Check
-  - Button „Health check“ sendet `GET {base_url}{health_path}` (Default: `/health`) mit kurzem Timeout.
-  - Ergebnis (OK/Fehler + HTTP‑Code) wird angezeigt.
+## CSS & Theming
 
-## Hinweise zu Backups und Validierung
+- CSS resource: `src/wbridge/assets/style.css`
+  - `.dim-label` class for secondary text
+  - Modest spacings/paddings; theme‑agnostic styling
+- Loaded via `Gtk.CssProvider` at app startup
 
-- Actions‑Editor:
-  - Vor dem Schreiben von `actions.json` wird eine Timestamp‑Sicherung angelegt.
-  - JSON‑Validierung prüft Pflichtfelder und Typen für HTTP/Shell.
-- Settings Inline‑Edit:
-  - Atomare INI‑Writes (Tempfile + Replace).
-  - Einfache Validierung für Base‑URL/Trigger‑Pfad.
 
-## Config‑CLI
+## File Monitors & Auto‑Reload
 
-Werkzeuge zur Verwaltung der lokalen Konfiguration:
+The GUI monitors:
+- `~/.config/wbridge/settings.ini`
+- `~/.config/wbridge/actions.json`
 
-```bash
-# wichtige Pfade anzeigen (optional maschinenlesbar)
-wbridge config show-paths
-wbridge config show-paths --json
+Changes from external editors trigger debounced reloads and UI refreshes (status labels, actions list, triggers, etc.).
 
-# Backups erstellen (Timestamp)
-wbridge config backup --what all      # oder actions|settings
 
-# Reset (löscht Dateien, optional mit Backups)
-wbridge config reset --backup               # beide
-wbridge config reset --keep-actions --backup
-wbridge config reset --keep-settings --backup
+## Troubleshooting
 
-# Wiederherstellen aus Backup-Datei
-wbridge config restore --file ~/.config/wbridge/actions.json.bak-YYYYmmdd-HHMMSS
-wbridge config restore --file ~/.config/wbridge/settings.ini.bak-YYYYmmdd-HHMMSS
-```
+“wbridge” not found in PATH (GNOME shortcuts don’t fire)
+- Install user‑wide with `pipx install --system-site-packages ".[http]"` (or later `wbridge[http]`)
+- Ensure `~/.local/bin` is in your GNOME session PATH
+- Or set an absolute command path in the GNOME shortcut
 
-Exit-Codes: 0 ok, 2 invalid args, 3 failure.
+“No module named 'gi'”
+- Ensure distro packages (`python3-gi`, GTK4) are installed
+- Use venv/pipx with `--system-site-packages`
 
-## Auto‑Reload (File Monitor)
+Starting GUI from checkout
+- Use: `PYTHONPATH=src python3 -m wbridge.app`
 
-Die GUI überwacht `~/.config/wbridge/settings.ini` und `~/.config/wbridge/actions.json`:
-- Änderungen von außen werden automatisch erkannt (Debounce ~200 ms).
-- Die Oberfläche lädt den Status neu (Label-Hinweis „Config reloaded from disk…“).
-- Bei `settings.ini`: Integration‑Status/Enable wird aktualisiert.
-- Bei `actions.json`: Actions‑Liste und Triggers‑Editor werden neu geladen.
 
-## GNOME Shortcuts & Autostart
-
-- Shortcuts installieren/entfernen:
-  - Settings‑Tab → Buttons „GNOME Shortcuts installieren/entfernen“.
-  - Priorität Installation:
-    1) settings.ini [gnome] (`binding_prompt`, `binding_command`, `binding_ui_show`)
-    2) ausgewähltes Profil (shortcuts.json)
-    3) Default‑Empfehlungen (`<Ctrl><Alt>p|m|u`)
-  - Entfernen:
-    - „Empfohlene“ werden zurückgesetzt.
-    - Wenn ein Profil ausgewählt ist, werden dessen Profil‑Shortcuts (deterministischer Suffix `wbridge-<slug>/`) ebenfalls entfernt.
-
-- Autostart:
-  - Settings‑Tab → „Autostart aktivieren/deaktivieren“.
-  - Legt `~/.config/autostart/wbridge.desktop` an/entfernt es (Exec=`wbridge-app`).
-
-## Global Installation (ohne venv)
-
-Für eine nutzerweite Bereitstellung der CLIs (wbridge, wbridge-app) ohne venv:
-
-- Variante A: pipx (empfohlen, mit Systempaketen sichtbar)
-  - Stelle sicher, dass die Systempakete installiert sind (siehe Requirements).
-  - Installation pipx:
-    - `sudo apt install pipx && pipx ensurepath`   # oder äquivalent auf deiner Distro
-  - Installation mit Zugriff auf Systempakete (wichtig für PyGObject):
-    - Aus diesem Projekt:
-      - `pipx install --system-site-packages ".[http]"`
-    - Aus veröffentlichtem Paket (später):
-      - `pipx install --system-site-packages "wbridge[http]"`
-  - Prüfen:
-    - `which wbridge`
-    - `python -c "import gi, sys; from gi.repository import Gtk; print('ok', Gtk.get_major_version())"`
-
-- Variante B: pip --user
-  - `pip install --user ".[http]"`
-  - Stelle sicher, dass `~/.local/bin` im PATH deiner GNOME‑Session ist (ggf. ab-/anmelden).
-
-Wichtig
-- pipx ohne `--system-site-packages` erstellt eine isolierte venv, in der `gi` nicht verfügbar ist → Fehler „No module named 'gi'“.
-- Systemweite Installation mit `sudo pip` wird nicht empfohlen (Konflikte mit dem Paketmanager).
-- PyGObject/GTK4 weiterhin über OS‑Pakete (z. B. `apt install python3-gi gir1.2-gtk-4.0`).
-
-## Hinweise zu uv
-
-- Entwicklung: uv ist ein schneller Ersatz für venv/pip.
-  - uv venv
-  - . .venv/bin/activate
-  - uv pip install -e ".[http]"
-- Nutzerweit („global“) ist pipx heute meist die klarste Option. uv kann technisch auch --user‑Ziele bedienen (uv pip install --user …), bietet aber erst mit einem veröffentlichten Paket den bequemen Modus „uv tool install wbridge[http]“ (geplant nach Veröffentlichung).
-
-## Troubleshooting – GNOME Shortcuts finden „wbridge“ nicht
-
-- Symptom: Tastenkombination löst nichts aus, obwohl der Shortcut existiert.
-- Ursache: GNOME‑Session‑PATH enthält ggf. nicht ~/.local/bin oder dein venv. 
-- Lösungen:
-  1) Installiere wbridge nutzerweit via pipx/pip --user (siehe „Global Installation“) und melde dich einmal ab/an.
-  2) Alternativ: Öffne GNOME Einstellungen → Tastatur → Benutzerdefinierte Verknüpfungen, wähle den Eintrag („Bridge: Prompt/Command/Show UI“) und ersetze den Command von „wbridge …“ durch den absoluten Pfad, z. B. 
-     /home/USER/.local/bin/wbridge trigger prompt --from-primary
-     oder dein venv‑Pfad.
-- Diagnose:
-  - gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings
-  - which wbridge
-  - wbridge-app starten, dann im Terminal testen:
-    wbridge trigger prompt --from-primary
-
-## Troubleshooting – 'No module named gi'
-
-Symptom
-- Beim Starten erscheint: „Error: GTK4/PyGObject not available … No module named 'gi'“.
-
-Ursache
-- Das Python‑Environment sieht die Systempakete (python3‑gi/GTK4) nicht.
-
-Lösung
-1) Systempakete installieren (siehe Requirements).
-2) Wenn mit pipx installiert:
-   - `pipx uninstall wbridge`
-   - `pipx install --system-site-packages ".[http]"`    # oder später: `pipx install --system-site-packages "wbridge[http]"`
-3) Wenn mit venv entwickelt:
-   - venv mit System‑Site‑Packages neu erstellen:
-     - `deactivate` (falls aktiv)
-     - `python3 -m venv --system-site-packages .venv`
-     - `. .venv/bin/activate`
-     - `pip install -e ".[http]"`
-4) Verifikation:
-   - `python3 -c "import gi; from gi.repository import Gtk, Gdk; print('GI OK', Gtk.get_major_version())"`
-   - `wbridge-app` starten; Terminal‑Fehler sollten verschwinden.
-
-## Uninstall
-
-- Paket deinstallieren
-  - pipx: pipx uninstall wbridge
-  - pip --user: pip uninstall wbridge
-- GNOME Shortcuts entfernen
-  - In der App (Settings‑Tab): „GNOME Shortcuts entfernen“ (empfohlene) und ggf. „Profil‑Shortcuts entfernen“.
-  - Alternativ per GNOME Einstellungen → Tastatur → Benutzerdefinierte Verknüpfungen → manuell löschen.
-- Autostart deaktivieren
-  - In der App: „Autostart deaktivieren“
-  - Manuell: rm ~/.config/autostart/wbridge.desktop
-- Konfiguration/Logs
-  - CLI (solange wbridge vorhanden): wbridge config reset --backup
-  - Manuell: 
-    - rm -f ~/.config/wbridge/settings.ini ~/.config/wbridge/actions.json
-    - rm -f ~/.local/state/wbridge/bridge.log
-
-## Project Layout (to be created next)
+## Project Layout
 
 ```
 src/
   wbridge/
     __init__.py
-    app.py               # GTK4 app entry point (wbridge-app)
+    app.py               # GTK4 app entry point (wbridge-app); starts IPC; loads CSS/resources
+    gui_window.py        # Main window; StackSidebar/Stack pages; Help panels; i18n
     cli.py               # CLI entry point (wbridge)
-    history.py           # ring buffer + APIs
-    client_ipc.py        # IPC server/dispatcher
-    actions.py           # action runner (HTTP/shell) + placeholders
-    config.py            # settings.ini + action loading
+    server_ipc.py        # Unix domain socket server
+    client_ipc.py        # Client helpers (if any)
+    history.py           # History store and APIs
+    actions.py           # Action runner (HTTP/Shell), placeholders
+    config.py            # settings.ini + actions.json loading/writing
     platform.py          # env detection, paths, app info
     gnome_shortcuts.py   # Gio.Settings automation for custom keybindings
-    autostart.py         # desktop autostart file mgmt
+    autostart.py         # desktop autostart mgmt
     logging_setup.py     # file+console logging
+    profiles_manager.py  # built‑in profiles (list/show/install), merge/backup/patch
+    profiles/            # built‑in profile bundles (e.g. witsy)
+    help/en/*.md         # per‑page Help content (English default)
+    assets/style.css     # CSS for subtle UI styling
 ```
 
-All module responsibilities and interfaces are defined in DESIGN.md.
+Packaging
+- `pyproject.toml` includes package data:
+  - `"wbridge" = ["help/**/*", "assets/**/*"]`
+  - `"wbridge.profiles" = ["**/*"]`
+
+
+## Changelog / Implementation Log
+
+See [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) for dated entries.  
+Latest: Step 8 – Help & i18n; StackSidebar navigation; Shortcuts policy; CSS; packaging; Status log tail; file monitors.
 
 
 ## License
 
 MIT (see LICENSE).
-
-
-## Next steps
-
-- Implement the initial module stubs and minimal runnable entry points.
-- Wire up IPC and CLI basics.
-- Implement GTK history view and selection monitoring.
-- Add actions engine and settings handling.
-- Provide GNOME shortcut install/remove buttons in UI.
-- Track progress using the checklist in DESIGN.md.

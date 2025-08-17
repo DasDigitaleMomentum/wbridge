@@ -12,6 +12,34 @@ Conventions
 
 ---
  
+## 2025-08-17 – Step 8: Help & i18n, Hilfe‑Panels, CSS/Packaging, Doku
+
+- Timestamp: 2025-08-17
+- Scope:
+  - GUI – Help & i18n:
+    - Pro Seite einklappbarer Hilfebereich (Gtk.Expander(_("Help"))) mit Markdown‑Inhalt aus Ressourcen (src/wbridge/help/en/*.md).
+    - gettext initialisiert (Domain "wbridge", Fallback True); UI‑Texte sukzessive in _() gewrappt; Englisch als Default.
+    - CSS‑Loader: assets/style.css wird geladen und als Gtk.CssProvider registriert (prio: APPLICATION); Klassennamen u.a. .dim-label für Sekundärtexte.
+  - Navigation/Guardrails (Bestätigung): Linksseitige Gtk.StackSidebar + Gtk.Stack bleibt Grundlage; Shortcuts‑Policy „nur wbridge‑verwaltete“ in UI beachtet (Bearbeitbarkeit auf wbridge‑Suffixe beschränkt; Fremde read‑only).
+  - Doku/Packaging:
+    - pyproject.toml: Paketdaten für "wbridge" um help/**/* und assets/**/* ergänzt.
+    - README.md/DESIGN.md aktualisiert: neue Navigation, Hilfe‑Konzept, i18n‑Vorbereitung, Shortcuts‑Scope‑Policy, CSS‑Hinweise, Run‑Anleitung.
+- Affected files:
+  - src/wbridge/gui_window.py (Help‑Panels, gettext‑Init, CSS‑Loader, Tooltips verfeinert)
+  - src/wbridge/help/en/{history.md,actions.md,triggers.md,shortcuts.md,settings.md,status.md} (neu)
+  - src/wbridge/assets/style.css (neu)
+  - pyproject.toml ([tool.setuptools.package-data] ergänzt)
+  - README.md, DESIGN.md (Doku‑Aktualisierungen)
+- Tests (manuell, erfolgreich):
+  - Hilfe‑Panels auf allen Seiten rendern Markdown korrekt; Expander‑Zustand stabil.
+  - i18n‑Fallback aktiv (englische Texte sichtbar, keine Missing‑Locale‑Fehler).
+  - Shortcuts‑Seite: Fremde Custom‑Keybindings sind read‑only; wbridge‑Einträge editierbar; Konfliktmeldungen erscheinen.
+  - CSS‑Klassen anwenden sich (z.B. .dim-label).
+- Notes:
+  - Lokalisierung: localedir bleibt zunächst None (Fallback); Vorbereitung für spätere .mo‑Auslieferung.
+  - Screenshots für README/DESIGN folgen in einem separaten Patch.
+  - Optional v1 (Folgeschritt): on_success.apply_to und timeout_s in Actions‑Validierung/Runner.
+
 ## 2025-08-16 – Optional Cleanup CLIs, PATH‑Hinweis in GUI, Doku‑Sync
 
 - Timestamp: 2025-08-16
