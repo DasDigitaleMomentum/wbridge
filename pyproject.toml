@@ -39,3 +39,4 @@ exclude = ["tests*", "docs*"]
 
 [tool.setuptools.package-data]
 "wbridge.profiles" = ["**/*"]
+"wbridge" = ["help/**/*", "assets/**/*"]

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Gtk4 MainWindow for wbridge with basic Notebook UI.
+Gtk4 MainWindow for wbridge with Stack + StackSidebar UI (replaces Notebook).
 
-Tabs:
-- History: zeigt Clipboard- und Primary-History, inkl. Apply/Swap Aktionen
-- Actions: placeholder mit kurzer Erklärung (wird später verdrahtet)
-- Settings: placeholder (Autostart/Shortcuts/Integration folgen später)
-- Status: Backend/Runtime Informationen
+Navigation (left sidebar):
+- History
+- Actions (Master-Detail: Liste links, Editor rechts; Form primär, Raw-JSON optional)
+- Triggers (Stub – implemented in later step)
+- Shortcuts (Stub – implemented in later step)
+- Settings
+- Status
 
 Die History-Ansicht ist mit dem HistoryStore des Application-Objekts verbunden.
 """
@@ -22,6 +24,15 @@ from gi.repository import Pango  # type: ignore
 from typing import Optional, Callable, cast
 import logging
 import shutil
+from pathlib import Path
+import gettext
+
+# i18n init (fallback to identity if no translations installed)
+try:
+    _t = gettext.translation("wbridge", localedir=None, fallback=True)
+    _ = _t.gettext
+except Exception:
+    _ = lambda s: s
 
 from .platform import active_env_summary, socket_path, xdg_state_dir, xdg_config_dir
 from .config import (
@@ -47,7 +58,7 @@ class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, application: Gtk.Application):
         super().__init__(application=application)
         self.set_title("wbridge")
-        self.set_default_size(900, 600)
+        self.set_default_size(1000, 650)
         self._logger = logging.getLogger("wbridge")
         # Cache für aktuelle Selektion (vermeidet Blocking-Reads auf dem GTK-Mainthread)
         self._cur_clip: str = ""
@@ -58,40 +69,92 @@ class MainWindow(Gtk.ApplicationWindow):
         self._reading_cb: bool = False
         self._reading_pr: bool = False
 
-        notebook = Gtk.Notebook()
-        notebook.set_tab_pos(Gtk.PositionType.TOP)
-        self.set_child(notebook)
+        # Load CSS (if available)
+        self._load_css()
 
-        # History tab
+        # Actions: Master-Detail State
+        self._actions_selected_name: Optional[str] = None
+        self._http_trigger_enabled: bool = True
+
+        # Navigation: StackSidebar + Stack
+        _sidebar, stack = self._build_navigation()
+
+        # Seiten einhängen (Stub-Seiten für Triggers/Shortcuts, Content für History/Actions/Settings/Status)
+        stack.add_titled(self._page_history(), "history", _("History"))
+        stack.add_titled(self._page_actions(), "actions", _("Actions"))
+        stack.add_titled(self._page_triggers(), "triggers", _("Triggers"))
+        stack.add_titled(self._page_shortcuts(), "shortcuts", _("Shortcuts"))
+        stack.add_titled(self._page_settings(), "settings", _("Settings"))
+        stack.add_titled(self._page_status(), "status", _("Status"))
+
+        # initial population
+        self.refresh_actions_list()
+        self._rebuild_triggers_editor()
+        # start file monitors (settings.ini, actions.json) for auto-reload
+        self._init_file_monitors()
+
+        # Periodisches Refresh der History-Listen
+        GLib.timeout_add(400, self._refresh_tick)  # type: ignore
+
+    def _build_navigation(self) -> tuple[Gtk.StackSidebar, Gtk.Stack]:
+        """Erstellt die linksseitige Navigation (StackSidebar) und den Inhaltsbereich (Stack)."""
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        root.set_hexpand(True)
+        root.set_vexpand(True)
+
+        stack = Gtk.Stack()
+        stack.set_hexpand(True)
+        stack.set_vexpand(True)
+        try:
+            stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        except Exception:
+            pass
+
+        sidebar = Gtk.StackSidebar()
+        sidebar.set_stack(stack)
+        sidebar.set_vexpand(True)
+        sidebar.set_hexpand(False)
+        sidebar.set_size_request(220, -1)
+
+        root.append(sidebar)
+        root.append(stack)
+        self.set_child(root)
+        return sidebar, stack
+
+    # --- Seiten-Fabriken ---
+
+    def _page_history(self) -> Gtk.Widget:
+        # History page content
         history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         history_box.set_margin_start(16)
         history_box.set_margin_end(16)
         history_box.set_margin_top(16)
         history_box.set_margin_bottom(16)
 
-        history_desc = Gtk.Label(label="History (Clipboard / Primary)\n"
-                                       "• Liste der letzten Einträge mit Aktionen: Als Clipboard setzen, Als Primary setzen, Swap (tauscht die letzten zwei).\n"
-                                       "• Tipp: CLI `wbridge selection set/get` funktioniert ebenfalls.")
+        history_desc = Gtk.Label(label=_("History (Clipboard / Primary)\n"
+                                       "• List of recent entries with actions: Set as Clipboard, Set as Primary, Swap (swaps the last two).\n"
+                                       "• Tip: CLI `wbridge selection set/get` also works."))
         history_desc.set_wrap(True)
         history_desc.set_xalign(0.0)
         history_box.append(history_desc)
 
         # History Controls: manueller Refresh + Zähler
         hist_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        refresh_btn = Gtk.Button(label="Refresh")
+        refresh_btn = Gtk.Button(label=_("Refresh"))
         refresh_btn.connect("clicked", lambda _b: self.refresh_history())
         hist_controls.append(refresh_btn)
 
-        self.hist_count = Gtk.Label(label="Einträge: 0 / 0")
+        self.hist_count = Gtk.Label(label=_("Entries: 0 / 0"))
         self.hist_count.set_xalign(0.0)
         hist_controls.append(self.hist_count)
 
         history_box.append(hist_controls)
 
         grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        grid.set_column_homogeneous(True)
 
         # Clipboard frame
-        cb_frame = Gtk.Frame(label="Clipboard")
+        cb_frame = Gtk.Frame(label=_("Clipboard"))
         cb_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         cb_box.set_margin_start(10)
         cb_box.set_margin_end(10)
@@ -100,40 +163,36 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Simple Set/Get helpers (bleiben als Testwerkzeuge)
         self.cb_entry = Gtk.Entry()
-        self.cb_entry.set_placeholder_text("Text hier eintippen und auf Set klicken …")
+        self.cb_entry.set_placeholder_text(_("Type text here and click Set …"))
         cb_box.append(self.cb_entry)
 
         cb_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        cb_set_btn = Gtk.Button(label="Set clipboard")
+        cb_set_btn = Gtk.Button(label=_("Set clipboard"))
         cb_set_btn.connect("clicked", self.on_set_clipboard_clicked)
         cb_btn_box.append(cb_set_btn)
 
-        cb_get_btn = Gtk.Button(label="Get clipboard")
+        cb_get_btn = Gtk.Button(label=_("Get clipboard"))
         cb_get_btn.connect("clicked", self.on_get_clipboard_clicked)
         cb_btn_box.append(cb_get_btn)
 
-        swap_cb_btn = Gtk.Button(label="Swap last two (clipboard)")
+        swap_cb_btn = Gtk.Button(label=_("Swap last two (clipboard)"))
         swap_cb_btn.connect("clicked", lambda _b: self.on_swap_clicked("clipboard"))
         cb_btn_box.append(swap_cb_btn)
 
         cb_box.append(cb_btn_box)
 
-        self.cb_label = Gtk.Label(label="Aktuell: (leer)")
+        self.cb_label = Gtk.Label(label=_("Current: (empty)"))
         self.cb_label.set_xalign(0.0)
-        self.cb_label.set_wrap(True)
+        self.cb_label.set_wrap(False)
         try:
-            self.cb_label.set_wrap_mode(Pango.WrapMode.CHAR)
-        except Exception:
-            pass
-        try:
-            self.cb_label.set_max_width_chars(80)
+            self.cb_label.set_ellipsize(Pango.EllipsizeMode.END)
         except Exception:
             pass
         self.cb_label.set_hexpand(True)
         cb_box.append(self.cb_label)
 
         # Clipboard History List
-        cb_hist_hdr = Gtk.Label(label="History (neueste zuerst):")
+        cb_hist_hdr = Gtk.Label(label=_("History (newest first):"))
         cb_hist_hdr.set_xalign(0.0)
         cb_box.append(cb_hist_hdr)
 
@@ -148,7 +207,7 @@ class MainWindow(Gtk.ApplicationWindow):
         cb_frame.set_child(cb_box)
 
         # Primary frame
-        pr_frame = Gtk.Frame(label="Primary Selection")
+        pr_frame = Gtk.Frame(label=_("Primary Selection"))
         pr_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         pr_box.set_margin_start(10)
         pr_box.set_margin_end(10)
@@ -156,39 +215,35 @@ class MainWindow(Gtk.ApplicationWindow):
         pr_box.set_margin_bottom(10)
 
         self.pr_entry = Gtk.Entry()
-        self.pr_entry.set_placeholder_text("Text hier eintippen und auf Set klicken …")
+        self.pr_entry.set_placeholder_text(_("Type text here and click Set …"))
         pr_box.append(self.pr_entry)
 
         pr_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        pr_set_btn = Gtk.Button(label="Set primary")
+        pr_set_btn = Gtk.Button(label=_("Set primary"))
         pr_set_btn.connect("clicked", self.on_set_primary_clicked)
         pr_btn_box.append(pr_set_btn)
 
-        pr_get_btn = Gtk.Button(label="Get primary")
+        pr_get_btn = Gtk.Button(label=_("Get primary"))
         pr_get_btn.connect("clicked", self.on_get_primary_clicked)
         pr_btn_box.append(pr_get_btn)
 
-        swap_pr_btn = Gtk.Button(label="Swap last two (primary)")
+        swap_pr_btn = Gtk.Button(label=_("Swap last two (primary)"))
         swap_pr_btn.connect("clicked", lambda _b: self.on_swap_clicked("primary"))
         pr_btn_box.append(swap_pr_btn)
 
         pr_box.append(pr_btn_box)
 
-        self.pr_label = Gtk.Label(label="Aktuell: (leer)")
+        self.pr_label = Gtk.Label(label=_("Current: (empty)"))
         self.pr_label.set_xalign(0.0)
-        self.pr_label.set_wrap(True)
+        self.pr_label.set_wrap(False)
         try:
-            self.pr_label.set_wrap_mode(Pango.WrapMode.CHAR)
-        except Exception:
-            pass
-        try:
-            self.pr_label.set_max_width_chars(80)
+            self.pr_label.set_ellipsize(Pango.EllipsizeMode.END)
         except Exception:
             pass
         self.pr_label.set_hexpand(True)
         pr_box.append(self.pr_label)
 
-        pr_hist_hdr = Gtk.Label(label="History (neueste zuerst):")
+        pr_hist_hdr = Gtk.Label(label=_("History (newest first):"))
         pr_hist_hdr.set_xalign(0.0)
         pr_box.append(pr_hist_hdr)
 
@@ -205,19 +260,25 @@ class MainWindow(Gtk.ApplicationWindow):
         grid.attach(cb_frame, 0, 0, 1, 1)
         grid.attach(pr_frame, 1, 0, 1, 1)
         history_box.append(grid)
+        # Help panel
+        try:
+            history_box.append(self._help_panel("history"))
+        except Exception:
+            pass
 
-        notebook.append_page(history_box, Gtk.Label(label="History"))
+        return history_box
 
-        # Actions tab
+    def _page_actions(self) -> Gtk.Widget:
+        # Actions page content (Master-Detail; Triggers-Editor bleibt vorerst unten, wird in Step 4 separiert)
         actions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         actions_box.set_margin_start(16)
         actions_box.set_margin_end(16)
         actions_box.set_margin_top(16)
         actions_box.set_margin_bottom(16)
 
-        actions_desc = Gtk.Label(label="Actions\n"
-                                        "• Definierte Aktionen (HTTP/Shell) aus ~/.config/wbridge/actions.json.\n"
-                                        "• Quelle wählen: Clipboard / Primary / Text.")
+        actions_desc = Gtk.Label(label=_("Actions\n"
+                                        "• Defined actions (HTTP/Shell) loaded from ~/.config/wbridge/actions.json.\n"
+                                        "• Choose source: Clipboard / Primary / Text."))
         actions_desc.set_wrap(True)
         actions_desc.set_xalign(0.0)
         actions_box.append(actions_desc)
@@ -225,34 +286,33 @@ class MainWindow(Gtk.ApplicationWindow):
         # Controls: source selection + optional text + reload
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
-        src_label = Gtk.Label(label="Quelle:")
+        src_label = Gtk.Label(label=_("Source:"))
         src_label.set_xalign(0.0)
         controls.append(src_label)
 
         self.actions_source = Gtk.ComboBoxText()
-        self.actions_source.append("clipboard", "Clipboard")
-        self.actions_source.append("primary", "Primary")
-        self.actions_source.append("text", "Text")
+        self.actions_source.append("clipboard", _("Clipboard"))
+        self.actions_source.append("primary", _("Primary"))
+        self.actions_source.append("text", _("Text"))
         self.actions_source.set_active_id("clipboard")
         self.actions_source.connect("changed", self._on_actions_source_changed)
         controls.append(self.actions_source)
 
         self.actions_text = Gtk.Entry()
-        self.actions_text.set_placeholder_text("Text für Quelle=Text …")
+        self.actions_text.set_placeholder_text(_("Text for source=Text …"))
         self.actions_text.set_sensitive(False)
         self.actions_text.set_hexpand(True)
         controls.append(self.actions_text)
 
-        reload_btn = Gtk.Button(label="Reload actions")
+        reload_btn = Gtk.Button(label=_("Reload actions"))
         reload_btn.connect("clicked", self._on_reload_actions_clicked)
         controls.append(reload_btn)
 
-        actions_box.append(controls)
-
-        # Add Action button
-        add_action_btn = Gtk.Button(label="Add Action")
+        add_action_btn = Gtk.Button(label=_("Add Action"))
         add_action_btn.connect("clicked", self._on_add_action_clicked)
-        actions_box.append(add_action_btn)
+        controls.append(add_action_btn)
+
+        actions_box.append(controls)
 
         # Hint if HTTP trigger disabled
         self.actions_hint = Gtk.Label(label="")
@@ -260,62 +320,324 @@ class MainWindow(Gtk.ApplicationWindow):
         self.actions_hint.set_xalign(0.0)
         actions_box.append(self.actions_hint)
 
-        # Actions list
-        self.actions_list = Gtk.ListBox()
-        self.actions_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        act_scrolled = Gtk.ScrolledWindow()
-        act_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        act_scrolled.set_min_content_height(240)
-        act_scrolled.set_child(self.actions_list)
-        actions_box.append(act_scrolled)
+        # Master-Detail Bereich
+        md = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        md.set_hexpand(True)
+        md.set_vexpand(True)
 
-        # Result output
+        # Left: Actions list
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left_box.set_size_request(280, -1)
+        lbl_actions = Gtk.Label(label=_("Actions"))
+        lbl_actions.set_xalign(0.0)
+        left_box.append(lbl_actions)
+
+        self.actions_list = Gtk.ListBox()
+        self.actions_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.actions_list.connect("row-selected", self._on_actions_row_selected)
+        left_scroll = Gtk.ScrolledWindow()
+        left_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        left_scroll.set_min_content_height(260)
+        left_scroll.set_child(self.actions_list)
+        left_box.append(left_scroll)
+
+        md.append(left_box)
+
+        # Right: Editor (Stack form/json)
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        right_box.set_hexpand(True)
+        right_box.set_vexpand(True)
+
+        self._actions_detail_stack = Gtk.Stack()
+        self._actions_detail_stack.set_hexpand(True)
+        self._actions_detail_stack.set_vexpand(True)
+
+        # Stack Switcher
+        switcher = Gtk.StackSwitcher()
+        switcher.set_stack(self._actions_detail_stack)
+        right_box.append(switcher)
+
+        # Form view
+        form_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+
+        # Gemeinsame Felder
+        row_name = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_name = Gtk.Label(label=_("Name:"))
+        lbl_name.set_xalign(0.0)
+        self.ed_name_entry = Gtk.Entry()
+        self.ed_name_entry.set_hexpand(True)
+        row_name.append(lbl_name); row_name.append(self.ed_name_entry)
+        form_box.append(row_name)
+
+        row_type = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_type = Gtk.Label(label=_("Type:"))
+        lbl_type.set_xalign(0.0)
+        self.ed_type_combo = Gtk.ComboBoxText()
+        self.ed_type_combo.append("http", "http")
+        self.ed_type_combo.append("shell", "shell")
+        self.ed_type_combo.set_active_id("http")
+        self.ed_type_combo.connect("changed", self._actions_on_type_changed)
+        row_type.append(lbl_type); row_type.append(self.ed_type_combo)
+        form_box.append(row_type)
+
+        # HTTP Felder
+        self.http_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        http_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        http_method_lbl = Gtk.Label(label=_("Method:"))
+        http_method_lbl.set_xalign(0.0)
+        self.ed_http_method = Gtk.ComboBoxText()
+        self.ed_http_method.append("GET", "GET")
+        self.ed_http_method.append("POST", "POST")
+        self.ed_http_method.set_active_id("GET")
+        http_url_lbl = Gtk.Label(label=_("URL:"))
+        http_url_lbl.set_xalign(0.0)
+        self.ed_http_url = Gtk.Entry()
+        self.ed_http_url.set_hexpand(True)
+        http_row1.append(http_method_lbl); http_row1.append(self.ed_http_method)
+        http_row1.append(http_url_lbl); http_row1.append(self.ed_http_url)
+        self.http_box.append(http_row1)
+        form_box.append(self.http_box)
+
+        # SHELL Felder
+        self.shell_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sh_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sh_cmd_lbl = Gtk.Label(label=_("Command:"))
+        sh_cmd_lbl.set_xalign(0.0)
+        self.ed_shell_cmd = Gtk.Entry()
+        self.ed_shell_cmd.set_hexpand(True)
+        sh_row1.append(sh_cmd_lbl); sh_row1.append(self.ed_shell_cmd)
+        self.shell_box.append(sh_row1)
+
+        sh_row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sh_args_lbl = Gtk.Label(label=_("Args (JSON array):"))
+        sh_args_lbl.set_xalign(0.0)
+        self.ed_shell_args_tv = Gtk.TextView(); self.ed_shell_args_tv.set_monospace(True)
+        sh_args_sw = Gtk.ScrolledWindow(); sh_args_sw.set_min_content_height(40); sh_args_sw.set_child(self.ed_shell_args_tv)
+        sh_row2.append(sh_args_lbl); sh_row2.append(sh_args_sw)
+        self.shell_box.append(sh_row2)
+
+        sh_row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        sh_use_lbl = Gtk.Label(label=_("Use shell:"))
+        sh_use_lbl.set_xalign(0.0)
+        self.ed_shell_use_switch = Gtk.Switch()
+        sh_row3.append(sh_use_lbl); sh_row3.append(self.ed_shell_use_switch)
+        self.shell_box.append(sh_row3)
+        form_box.append(self.shell_box)
+
+        # Buttons (Form)
+        form_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_save_form = Gtk.Button(label=_("Save (Form)"))
+        btn_save_form.connect("clicked", self._on_actions_save_form_clicked)
+        form_btns.append(btn_save_form)
+
+        btn_duplicate = Gtk.Button(label=_("Duplicate"))
+        btn_duplicate.connect("clicked", self._on_action_duplicate_current_clicked)
+        form_btns.append(btn_duplicate)
+
+        btn_delete = Gtk.Button(label=_("Delete"))
+        btn_delete.connect("clicked", self._on_action_delete_current_clicked)
+        form_btns.append(btn_delete)
+
+        btn_cancel = Gtk.Button(label=_("Cancel"))
+        btn_cancel.connect("clicked", self._on_action_cancel_clicked)
+        form_btns.append(btn_cancel)
+
+        self.btn_run = Gtk.Button(label=_("Run"))
+        self.btn_run.connect("clicked", self._on_action_run_current_clicked)
+        form_btns.append(self.btn_run)
+
+        form_box.append(form_btns)
+
+        self._actions_detail_stack.add_titled(form_box, "form", _("Form"))
+
+        # JSON view
+        json_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._actions_json_tv = Gtk.TextView()
+        self._actions_json_tv.set_monospace(True)
+        self._actions_json_tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        json_sw = Gtk.ScrolledWindow()
+        json_sw.set_min_content_height(220)
+        json_sw.set_child(self._actions_json_tv)
+        json_box.append(json_sw)
+        btn_save_json = Gtk.Button(label=_("Save (JSON)"))
+        btn_save_json.connect("clicked", self._on_actions_save_json_clicked)
+        json_box.append(btn_save_json)
+
+        self._actions_detail_stack.add_titled(json_box, "json", "JSON")
+        try:
+            self._actions_detail_stack.set_visible_child_name("form")
+        except Exception:
+            pass
+
+        right_box.append(self._actions_detail_stack)
+
+        # Result output (global for Actions)
         self.actions_result = Gtk.Label(label="")
         self.actions_result.set_wrap(True)
         self.actions_result.set_xalign(0.0)
-        actions_box.append(self.actions_result)
+        right_box.append(self.actions_result)
 
-        # Triggers editor
-        triggers_hdr = Gtk.Label(label="Triggers (Alias → Action)")
-        triggers_hdr.set_xalign(0.0)
-        actions_box.append(triggers_hdr)
+        md.append(right_box)
+        actions_box.append(md)
+
+        # Sichtbarkeit HTTP/Shell initial setzen
+        self._actions_update_type_visibility()
+
+        # Help panel
+        try:
+            actions_box.append(self._help_panel("actions"))
+        except Exception:
+            pass
+
+        return actions_box
+
+    def _page_triggers(self) -> Gtk.Widget:
+        # Triggers-Seite: Tabelle + Add/Save Buttons
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+
+        hdr = Gtk.Label(label=_("Triggers (Alias → Action)"))
+        hdr.set_xalign(0.0)
+        box.append(hdr)
 
         self.triggers_list = Gtk.ListBox()
         self.triggers_list.set_selection_mode(Gtk.SelectionMode.NONE)
         tr_scrolled = Gtk.ScrolledWindow()
         tr_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        tr_scrolled.set_min_content_height(160)
+        tr_scrolled.set_min_content_height(260)
         tr_scrolled.set_child(self.triggers_list)
-        actions_box.append(tr_scrolled)
+        box.append(tr_scrolled)
 
-        tr_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        tr_add_btn = Gtk.Button(label="Add Trigger")
-        tr_add_btn.connect("clicked", self._on_triggers_add_clicked)
-        tr_btns.append(tr_add_btn)
+        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        add_btn = Gtk.Button(label=_("Add Trigger"))
+        add_btn.connect("clicked", self._on_triggers_add_clicked)
+        btns.append(add_btn)
 
-        tr_save_btn = Gtk.Button(label="Save Triggers")
-        tr_save_btn.connect("clicked", self._on_triggers_save_clicked)
-        tr_btns.append(tr_save_btn)
+        save_btn = Gtk.Button(label=_("Save Triggers"))
+        save_btn.connect("clicked", self._on_triggers_save_clicked)
+        btns.append(save_btn)
 
-        actions_box.append(tr_btns)
+        box.append(btns)
 
-        notebook.append_page(actions_box, Gtk.Label(label="Actions"))
+        # initial populate
+        try:
+            self._rebuild_triggers_editor()
+        except Exception:
+            pass
 
-        # initial population
-        self.refresh_actions_list()
-        self._rebuild_triggers_editor()
-        # start file monitors (settings.ini, actions.json) for auto-reload
-        self._init_file_monitors()
+        # Help panel
+        try:
+            box.append(self._help_panel("triggers"))
+        except Exception:
+            pass
 
-        # Settings tab (v1)
+        return box
+
+    def _page_shortcuts(self) -> Gtk.Widget:
+        # Shortcuts-Seite: wbridge-verwaltete Einträge editierbar; optional alle anzeigen (read-only)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+
+        # Header + Hint
+        hdr = Gtk.Label(label=_("Shortcuts (GNOME Custom Keybindings)"))
+        hdr.set_xalign(0.0)
+        box.append(hdr)
+
+        hint = Gtk.Label(label=_("Only wbridge-managed entries are editable. Foreign entries optionally visible (read-only)."))
+        hint.set_wrap(True)
+        hint.set_xalign(0.0)
+        box.append(hint)
+
+        # PATH-Hinweis (falls wbridge nicht im PATH)
+        self.shortcuts_path_hint = Gtk.Label(label="")
+        self.shortcuts_path_hint.set_wrap(True)
+        self.shortcuts_path_hint.set_xalign(0.0)
+        try:
+            if shutil.which("wbridge") is None:
+                self.shortcuts_path_hint.set_text(_("Hint: 'wbridge' was not found in PATH. GNOME Shortcuts call 'wbridge'; install user-wide via pipx/pip --user or use an absolute path in the shortcuts."))
+        except Exception:
+            pass
+        box.append(self.shortcuts_path_hint)
+
+        # Controls: Show all (read-only), Add, Save, Reload
+        ctrl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_show = Gtk.Label(label=_("Show all custom (read-only):"))
+        lbl_show.set_xalign(0.0)
+        ctrl.append(lbl_show)
+        self.shortcuts_show_all = Gtk.Switch()
+        self.shortcuts_show_all.set_active(False)
+        def _on_show_all(_sw, _ps=None):
+            try:
+                self._shortcuts_reload()
+            except Exception:
+                pass
+            return False
+        self.shortcuts_show_all.connect("state-set", _on_show_all)
+        ctrl.append(self.shortcuts_show_all)
+
+        btn_add = Gtk.Button(label=_("Add"))
+        btn_add.connect("clicked", self._shortcuts_on_add_clicked)
+        ctrl.append(btn_add)
+
+        btn_save = Gtk.Button(label=_("Save"))
+        btn_save.connect("clicked", self._shortcuts_on_save_clicked)
+        ctrl.append(btn_save)
+
+        btn_reload = Gtk.Button(label=_("Reload"))
+        btn_reload.connect("clicked", self._shortcuts_on_reload_clicked)
+        ctrl.append(btn_reload)
+
+        box.append(ctrl)
+
+        # Konflikt-Hinweis
+        self.shortcuts_conflicts_label = Gtk.Label(label="")
+        self.shortcuts_conflicts_label.set_xalign(0.0)
+        box.append(self.shortcuts_conflicts_label)
+
+        # List
+        self.shortcuts_list = Gtk.ListBox()
+        self.shortcuts_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sc.set_min_content_height(300)
+        sc.set_child(self.shortcuts_list)
+        box.append(sc)
+
+        # Ergebnis-Meldungen
+        self.shortcuts_result = Gtk.Label(label="")
+        self.shortcuts_result.set_wrap(True)
+        self.shortcuts_result.set_xalign(0.0)
+        box.append(self.shortcuts_result)
+
+        # Initiales Laden
+        try:
+            self._shortcuts_reload()
+        except Exception:
+            pass
+
+        # Help panel
+        try:
+            box.append(self._help_panel("shortcuts"))
+        except Exception:
+            pass
+
+        return box
+
+    def _page_settings(self) -> Gtk.Widget:
+        # Settings page content (Inline-Edit)
         settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         settings_box.set_margin_start(16)
         settings_box.set_margin_end(16)
         settings_box.set_margin_top(16)
         settings_box.set_margin_bottom(16)
 
-        settings_desc = Gtk.Label(label="Settings\n"
-                                         "• Basisinformationen und Platzhalter-Buttons (noch ohne Funktion).")
+        settings_desc = Gtk.Label(label=_("Settings\n• Basic information and actions."))
         settings_desc.set_wrap(True)
         settings_desc.set_xalign(0.0)
         settings_box.append(settings_desc)
@@ -326,7 +648,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.path_hint.set_xalign(0.0)
         try:
             if shutil.which("wbridge") is None:
-                self.path_hint.set_text("Hinweis: 'wbridge' wurde nicht im PATH gefunden. GNOME Shortcuts rufen 'wbridge' auf; installiere nutzerweit via pipx/pip --user oder trage in den Shortcuts den absoluten Pfad ein.")
+                self.path_hint.set_text(_("Hint: 'wbridge' was not found in PATH. GNOME Shortcuts call 'wbridge'; install user-wide via pipx/pip --user or provide an absolute path in the shortcut command."))
         except Exception:
             pass
         settings_box.append(self.path_hint)
@@ -339,7 +661,7 @@ class MainWindow(Gtk.ApplicationWindow):
         try:
             disp = Gdk.Display.get_default()
             disp_type = GObject.type_name(disp.__gtype__)
-            lbl_backend_k = Gtk.Label(label="GDK Display:")
+            lbl_backend_k = Gtk.Label(label=_("GDK Display:"))
             lbl_backend_k.set_xalign(0.0)
             lbl_backend_v = Gtk.Label(label=disp_type)
             lbl_backend_v.set_xalign(0.0)
@@ -350,7 +672,7 @@ class MainWindow(Gtk.ApplicationWindow):
             pass
 
         # Socket Pfad
-        lbl_sock_k = Gtk.Label(label="IPC Socket:")
+        lbl_sock_k = Gtk.Label(label=_("IPC Socket:"))
         lbl_sock_k.set_xalign(0.0)
         lbl_sock_v = Gtk.Label(label=str(socket_path()))
         lbl_sock_v.set_xalign(0.0)
@@ -359,7 +681,7 @@ class MainWindow(Gtk.ApplicationWindow):
         row += 1
 
         # Log Pfad
-        lbl_log_k = Gtk.Label(label="Log-Datei:")
+        lbl_log_k = Gtk.Label(label=_("Log file:"))
         lbl_log_k.set_xalign(0.0)
         lbl_log_v = Gtk.Label(label=str(xdg_state_dir() / "bridge.log"))
         lbl_log_v.set_xalign(0.0)
@@ -371,25 +693,25 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Integration Status
         integ_grid = Gtk.Grid(column_spacing=12, row_spacing=6)
-        lbl_integ_hdr = Gtk.Label(label="Integration Status")
+        lbl_integ_hdr = Gtk.Label(label=_("Integration status"))
         lbl_integ_hdr.set_xalign(0.0)
         settings_box.append(lbl_integ_hdr)
 
-        lbl_enabled_k = Gtk.Label(label="http_trigger_enabled:")
+        lbl_enabled_k = Gtk.Label(label=_("http_trigger_enabled:"))
         lbl_enabled_k.set_xalign(0.0)
         self.integ_enabled_v = Gtk.Label(label="")
         self.integ_enabled_v.set_xalign(0.0)
         integ_grid.attach(lbl_enabled_k, 0, 0, 1, 1)
         integ_grid.attach(self.integ_enabled_v, 1, 0, 1, 1)
 
-        lbl_base_k = Gtk.Label(label="Base URL:")
+        lbl_base_k = Gtk.Label(label=_("Base URL:"))
         lbl_base_k.set_xalign(0.0)
         self.integ_base_v = Gtk.Label(label="")
         self.integ_base_v.set_xalign(0.0)
         integ_grid.attach(lbl_base_k, 0, 1, 1, 1)
         integ_grid.attach(self.integ_base_v, 1, 1, 1, 1)
 
-        lbl_path_k = Gtk.Label(label="Trigger Path:")
+        lbl_path_k = Gtk.Label(label=_("Trigger Path:"))
         lbl_path_k.set_xalign(0.0)
         self.integ_path_v = Gtk.Label(label="")
         self.integ_path_v.set_xalign(0.0)
@@ -409,6 +731,10 @@ class MainWindow(Gtk.ApplicationWindow):
         lbl_sw.set_xalign(0.0)
         row_sw.append(lbl_sw)
         self.integ_enabled_switch = Gtk.Switch()
+        try:
+            self.integ_enabled_switch.set_tooltip_text("Enable or disable the HTTP trigger integration backend.")
+        except Exception:
+            pass
         row_sw.append(self.integ_enabled_switch)
         edit_box.append(row_sw)
 
@@ -419,6 +745,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self.integ_base_entry = Gtk.Entry()
         self.integ_base_entry.set_hexpand(True)
         row_base.append(lbl_base)
+        try:
+            self.integ_base_entry.set_tooltip_text("Base URL of the HTTP trigger service (e.g., http://localhost:8808)")
+        except Exception:
+            pass
         row_base.append(self.integ_base_entry)
         edit_box.append(row_base)
 
@@ -429,24 +759,28 @@ class MainWindow(Gtk.ApplicationWindow):
         self.integ_path_entry = Gtk.Entry()
         self.integ_path_entry.set_hexpand(True)
         row_path.append(lbl_path)
+        try:
+            self.integ_path_entry.set_tooltip_text("Trigger path (e.g., /trigger). Used with the Base URL to form the full endpoint.")
+        except Exception:
+            pass
         row_path.append(self.integ_path_entry)
         edit_box.append(row_path)
 
         # Buttons: Save / Discard / Reload Settings / Health check
         row_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_save = Gtk.Button(label="Speichern")
+        btn_save = Gtk.Button(label=_("Save"))
         btn_save.connect("clicked", self._on_save_integration_clicked)
         row_btns.append(btn_save)
 
-        btn_discard = Gtk.Button(label="Verwerfen")
+        btn_discard = Gtk.Button(label=_("Discard"))
         btn_discard.connect("clicked", self._on_discard_integration_clicked)
         row_btns.append(btn_discard)
 
-        btn_reload = Gtk.Button(label="Reload Settings")
+        btn_reload = Gtk.Button(label=_("Reload Settings"))
         btn_reload.connect("clicked", self._on_reload_settings_clicked)
         row_btns.append(btn_reload)
 
-        btn_health = Gtk.Button(label="Health check")
+        btn_health = Gtk.Button(label=_("Health check"))
         btn_health.connect("clicked", self._on_health_check_clicked)
         row_btns.append(btn_health)
 
@@ -462,14 +796,14 @@ class MainWindow(Gtk.ApplicationWindow):
         self._populate_integration_edit()
 
         # Profile Bereich
-        prof_hdr = Gtk.Label(label="Profile")
+        prof_hdr = Gtk.Label(label=_("Profile"))
         prof_hdr.set_xalign(0.0)
         settings_box.append(prof_hdr)
 
         prof_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
         row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl_prof = Gtk.Label(label="Profil:")
+        lbl_prof = Gtk.Label(label=_("Profile:"))
         lbl_prof.set_xalign(0.0)
         row1.append(lbl_prof)
 
@@ -477,18 +811,18 @@ class MainWindow(Gtk.ApplicationWindow):
         try:
             names = list_builtin_profiles()
             if not names:
-                self.profile_combo.append("none", "(keine Profile gefunden)")
+                self.profile_combo.append("none", _("(no profiles found)"))
                 self.profile_combo.set_active_id("none")
             else:
                 for n in names:
                     self.profile_combo.append(n, n)
                 self.profile_combo.set_active(0)
         except Exception:
-            self.profile_combo.append("err", "(Fehler beim Laden)")
+            self.profile_combo.append("err", _("(error loading)"))
             self.profile_combo.set_active_id("err")
         row1.append(self.profile_combo)
 
-        btn_show = Gtk.Button(label="Anzeigen")
+        btn_show = Gtk.Button(label=_("Show"))
         btn_show.connect("clicked", self._on_profile_show_clicked)
         row1.append(btn_show)
 
@@ -496,10 +830,26 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Installations-Optionen
         opts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.chk_overwrite_actions = Gtk.CheckButton(label="Actions überschreiben")
-        self.chk_patch_settings = Gtk.CheckButton(label="Settings patchen")
-        self.chk_install_shortcuts = Gtk.CheckButton(label="Shortcuts installieren")
-        self.chk_dry_run = Gtk.CheckButton(label="Dry-run")
+        self.chk_overwrite_actions = Gtk.CheckButton(label=_("Overwrite actions"))
+        try:
+            self.chk_overwrite_actions.set_tooltip_text("Overwrite existing actions in actions.json with the selected profile's definitions.")
+        except Exception:
+            pass
+        self.chk_patch_settings = Gtk.CheckButton(label=_("Patch settings"))
+        try:
+            self.chk_patch_settings.set_tooltip_text("Patch settings.ini with profile values (non-destructive where possible).")
+        except Exception:
+            pass
+        self.chk_install_shortcuts = Gtk.CheckButton(label=_("Install shortcuts"))
+        try:
+            self.chk_install_shortcuts.set_tooltip_text("Install GNOME custom keybindings in the wbridge scope (recommended).")
+        except Exception:
+            pass
+        self.chk_dry_run = Gtk.CheckButton(label=_("Dry-run"))
+        try:
+            self.chk_dry_run.set_tooltip_text("Preview changes without writing files.")
+        except Exception:
+            pass
         opts.append(self.chk_overwrite_actions)
         opts.append(self.chk_patch_settings)
         opts.append(self.chk_install_shortcuts)
@@ -508,7 +858,7 @@ class MainWindow(Gtk.ApplicationWindow):
         prof_box.append(opts)
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_install = Gtk.Button(label="Installieren")
+        btn_install = Gtk.Button(label=_("Install"))
         btn_install.connect("clicked", self._on_profile_install_clicked)
         row2.append(btn_install)
         prof_box.append(row2)
@@ -522,19 +872,19 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Platzhalter-Buttons
         btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_shortcuts_install = Gtk.Button(label="GNOME Shortcuts installieren")
+        btn_shortcuts_install = Gtk.Button(label=_("Install GNOME shortcuts"))
         btn_shortcuts_install.connect("clicked", self._on_install_shortcuts_clicked)
         btns.append(btn_shortcuts_install)
 
-        btn_shortcuts_remove = Gtk.Button(label="GNOME Shortcuts entfernen")
+        btn_shortcuts_remove = Gtk.Button(label=_("Remove GNOME shortcuts"))
         btn_shortcuts_remove.connect("clicked", self._on_remove_shortcuts_clicked)
         btns.append(btn_shortcuts_remove)
 
-        btn_autostart_enable = Gtk.Button(label="Autostart aktivieren")
+        btn_autostart_enable = Gtk.Button(label=_("Enable autostart"))
         btn_autostart_enable.connect("clicked", self._on_enable_autostart_clicked)
         btns.append(btn_autostart_enable)
 
-        btn_autostart_disable = Gtk.Button(label="Autostart deaktivieren")
+        btn_autostart_disable = Gtk.Button(label=_("Disable autostart"))
         btn_autostart_disable.connect("clicked", self._on_disable_autostart_clicked)
         btns.append(btn_autostart_disable)
 
@@ -545,9 +895,16 @@ class MainWindow(Gtk.ApplicationWindow):
         self.settings_result.set_xalign(0.0)
         settings_box.append(self.settings_result)
 
-        notebook.append_page(settings_box, Gtk.Label(label="Settings"))
+        # Help panel
+        try:
+            settings_box.append(self._help_panel("settings"))
+        except Exception:
+            pass
 
-        # Status tab
+        return settings_box
+
+    def _page_status(self) -> Gtk.Widget:
+        # Status page content
         status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         status_box.set_margin_start(16)
         status_box.set_margin_end(16)
@@ -572,17 +929,45 @@ class MainWindow(Gtk.ApplicationWindow):
             backend_label.set_xalign(0.0)
             status_box.append(backend_label)
 
-        help_label = Gtk.Label(label="Hinweis: History-Tab zeigt die Einträge. "
-                                      "Buttons führen Apply/Swap aus. "
-                                      "CLI `wbridge history ...` ist ebenfalls verfügbar.")
+        help_label = Gtk.Label(label=_("Hint: The History page shows the entries. Buttons perform Apply/Swap. The CLI `wbridge history ...` is also available."))
         help_label.set_wrap(True)
         help_label.set_xalign(0.0)
         status_box.append(help_label)
 
-        notebook.append_page(status_box, Gtk.Label(label="Status"))
+        # Log Tail
+        log_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        log_lbl = Gtk.Label(label=_("Log (tail 200):"))
+        log_lbl.set_xalign(0.0)
+        log_hdr.append(log_lbl)
+        btn_log_refresh = Gtk.Button(label=_("Refresh"))
+        btn_log_refresh.connect("clicked", self._on_log_refresh_clicked)
+        log_hdr.append(btn_log_refresh)
+        status_box.append(log_hdr)
 
-        # Periodisches Refresh der History-Listen
-        GLib.timeout_add(400, self._refresh_tick)  # type: ignore
+        self.log_tv = Gtk.TextView()
+        self.log_tv.set_monospace(True)
+        self.log_tv.set_wrap_mode(Gtk.WrapMode.CHAR)
+        self.log_tv.set_editable(False)
+        self.log_tv.set_cursor_visible(False)
+        log_sw = Gtk.ScrolledWindow()
+        log_sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        log_sw.set_min_content_height(220)
+        log_sw.set_child(self.log_tv)
+        status_box.append(log_sw)
+
+        # Initial load
+        try:
+            self._on_log_refresh_clicked(None)
+        except Exception:
+            pass
+
+        # Help panel
+        try:
+            status_box.append(self._help_panel("status"))
+        except Exception:
+            pass
+
+        return status_box
 
     # --- History UI helpers ---
 
@@ -605,7 +990,7 @@ class MainWindow(Gtk.ApplicationWindow):
         pr_items = self._history_list("primary", limit)
         # Zähler aktualisieren (Clipboard / Primary)
         try:
-            self.hist_count.set_text(f"Einträge: {len(cb_items)} / {len(pr_items)}")
+            self.hist_count.set_text(_("Entries: {cb} / {pr}").format(cb=len(cb_items), pr=len(pr_items)))
         except Exception:
             pass
 
@@ -613,8 +998,8 @@ class MainWindow(Gtk.ApplicationWindow):
         cb_sel = self._cur_clip or ""
         pr_sel = self._cur_primary or ""
         try:
-            self.cb_label.set_text(f"Aktuell: {cb_sel!r}" if cb_sel else "Aktuell: (leer)")
-            self.pr_label.set_text(f"Aktuell: {pr_sel!r}" if pr_sel else "Aktuell: (leer)")
+            self.cb_label.set_text(_("Current: {val}").format(val=repr(cb_sel)) if cb_sel else _("Current: (empty)"))
+            self.pr_label.set_text(_("Current: {val}").format(val=repr(pr_sel)) if pr_sel else _("Current: (empty)"))
         except Exception:
             pass
 
@@ -654,36 +1039,30 @@ class MainWindow(Gtk.ApplicationWindow):
         # Zeile 1: Text mit optionaler "aktuell"-Markierung und Index
         top_label = Gtk.Label()
         top_label.set_xalign(0.0)
-        top_label.set_wrap(True)
+        top_label.set_wrap(False)
         top_label.set_use_markup(True)
         try:
-            top_label.set_wrap_mode(Pango.WrapMode.CHAR)
-        except Exception:
-            pass
-        try:
-            top_label.set_max_width_chars(80)
+            top_label.set_ellipsize(Pango.EllipsizeMode.END)
         except Exception:
             pass
         top_label.set_hexpand(True)
         preview = text.strip().splitlines()[0] if text else ""
-        if len(preview) > 200:
-            preview = preview[:200] + "…"
         # Markup sicher escapen
         try:
             esc = GLib.markup_escape_text(preview)
         except Exception:
             esc = preview
-        mark_current = "<b>[aktuell]</b> " if (current_text and text == current_text) else ""
+        mark_current = f"<b>{_('[current]')}</b> " if (current_text and text == current_text) else ""
         top_label.set_markup(f"{mark_current}[{idx}] {esc}")
         vbox.append(top_label)
 
         # Zeile 2: Buttons
         btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        btn_clip = Gtk.Button(label="Als Clipboard setzen")
+        btn_clip = Gtk.Button(label=_("Set as Clipboard"))
         btn_clip.connect("clicked", lambda _b: self._apply_text("clipboard", text))
         btns.append(btn_clip)
 
-        btn_prim = Gtk.Button(label="Als Primary setzen")
+        btn_prim = Gtk.Button(label=_("Set as Primary"))
         btn_prim.connect("clicked", lambda _b: self._apply_text("primary", text))
         btns.append(btn_prim)
 
@@ -766,14 +1145,14 @@ class MainWindow(Gtk.ApplicationWindow):
             try:
                 t = source.read_text_finish(res)
                 if which == "primary":
-                    self.pr_label.set_text(f"Aktuell: {t!r}")
+                    self.pr_label.set_text(_("Current: {val}").format(val=repr(t)))
                 else:
-                    self.cb_label.set_text(f"Aktuell: {t!r}")
+                    self.cb_label.set_text(_("Current: {val}").format(val=repr(t)))
             except Exception as e:
                 if which == "primary":
-                    self.pr_label.set_text(f"Lesefehler: {e!r}")
+                    self.pr_label.set_text(_("Read error: {err}").format(err=repr(e)))
                 else:
-                    self.cb_label.set_text(f"Lesefehler: {e!r}")
+                    self.cb_label.set_text(_("Read error: {err}").format(err=repr(e)))
             return False
 
         try:
@@ -793,7 +1172,7 @@ class MainWindow(Gtk.ApplicationWindow):
                     if t != self._cur_clip:
                         self._cur_clip = t
                         self._hist_dirty = True
-                    self.cb_label.set_text(f"Aktuell: {t!r}" if t else "Aktuell: (leer)")
+                    self.cb_label.set_text(_("Current: {val}").format(val=repr(t)) if t else _("Current: (empty)"))
                 except Exception:
                     pass
                 finally:
@@ -813,7 +1192,7 @@ class MainWindow(Gtk.ApplicationWindow):
                     if t != self._cur_primary:
                         self._cur_primary = t
                         self._hist_dirty = True
-                    self.pr_label.set_text(f"Aktuell: {t!r}" if t else "Aktuell: (leer)")
+                    self.pr_label.set_text(_("Current: {val}").format(val=repr(t)) if t else _("Current: (empty)"))
                 except Exception:
                     pass
                 finally:
@@ -825,14 +1204,62 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception:
             pass
 
-    # --- Actions UI helpers ---
+    # --- Actions UI helpers (Master-Detail) ---
 
-    def refresh_actions_list(self) -> None:
-        # Populate actions from application cache
+    def _build_action_list_row(self, action: dict) -> Gtk.ListBoxRow:
+        name = str(action.get("name") or "(unnamed)")
+        typ = str(action.get("type") or "").lower()
+        # header preview
+        if typ == "http":
+            method = str(action.get("method") or "GET").upper()
+            url = str(action.get("url") or "")
+            preview = f"{method} {url}" if url else method
+        else:
+            cmd = str(action.get("command") or "")
+            preview = cmd or "(no command)"
+        row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title = Gtk.Label(label=name)
+        title.set_xalign(0.0)
+        title.set_wrap(False)
+        try:
+            title.set_ellipsize(Pango.EllipsizeMode.END)
+        except Exception:
+            pass
+        subtitle = Gtk.Label(label=f"[{typ}] {preview}")
+        subtitle.set_xalign(0.0)
+        subtitle.set_wrap(False)
+        try:
+            subtitle.set_ellipsize(Pango.EllipsizeMode.END)
+        except Exception:
+            pass
+        try:
+            subtitle.get_style_context().add_class("dim-label")
+        except Exception:
+            pass
+        row_box.append(title)
+        row_box.append(subtitle)
+        row = Gtk.ListBoxRow()
+        row.set_child(row_box)
+        row._wbridge_action_name = name  # type: ignore[attr-defined]
+        return row
+
+    def _actions_load_list(self) -> list[dict]:
         app = self.get_application()
         cfg = getattr(app, "_actions", None)
         actions = getattr(cfg, "actions", []) if cfg else []
+        if not isinstance(actions, list):
+            return []
+        return actions
 
+    def _actions_find_by_name(self, name: Optional[str]) -> Optional[dict]:
+        if not name:
+            return None
+        for a in self._actions_load_list():
+            if str(a.get("name") or "") == name:
+                return a
+        return None
+
+    def refresh_actions_list(self) -> None:
         # Determine if HTTP trigger is enabled
         enabled = True
         try:
@@ -840,29 +1267,122 @@ class MainWindow(Gtk.ApplicationWindow):
             enabled = str(smap.get("integration", {}).get("http_trigger_enabled", "false")).lower() == "true"
         except Exception:
             enabled = True
+        self._http_trigger_enabled = enabled
 
         # Update hint
         try:
-            self.actions_hint.set_text("" if enabled else "HTTP Trigger disabled – in Settings aktivieren")
+            self.actions_hint.set_text("" if enabled else _("HTTP trigger disabled – enable it in Settings"))
         except Exception:
             pass
 
+        prev = self._actions_selected_name
         self._clear_listbox(self.actions_list)
+        actions = self._actions_load_list()
         for action in actions:
-            row = self._build_action_row(action, enabled)
+            row = self._build_action_list_row(action)
             self.actions_list.append(row)
-        # also refresh triggers editor when actions change (names/options)
+
+        # Nach Laden: Auswahl wiederherstellen oder erste auswählen
+        # Hinweis: row-selected callback bindet Editor
+        def _select_initial():
+            try:
+                # Suche Row mit prev
+                target_row = None
+                child = self.actions_list.get_first_child()
+                while child is not None:
+                    if isinstance(child, Gtk.ListBoxRow):
+                        name = getattr(child, "_wbridge_action_name", None)
+                        if prev and name == prev:
+                            target_row = child
+                            break
+                        if target_row is None:
+                            target_row = child
+                    child = child.get_next_sibling()
+                if target_row is not None:
+                    self.actions_list.select_row(target_row)  # type: ignore[arg-type]
+                # Run-Button-Sensitivität
+                self.btn_run.set_sensitive(bool(self._http_trigger_enabled and self._actions_selected_name))
+            except Exception:
+                pass
+            return False
+        GLib.idle_add(_select_initial)  # type: ignore
+
+        # auch Triggers aktualisieren (Namen)
         self._rebuild_triggers_editor()
+
+    def _on_actions_row_selected(self, _lb: Gtk.ListBox, row: Optional[Gtk.ListBoxRow]) -> None:
+        if row is None:
+            return
+        try:
+            name = getattr(row, "_wbridge_action_name", None)
+        except Exception:
+            name = None
+        if name:
+            self._actions_select(name)
+
+    def _actions_select(self, name: str) -> None:
+        act = self._actions_find_by_name(name)
+        if not act:
+            return
+        self._actions_selected_name = name
+        self._actions_bind_form(act)
+        # JSON Editor füllen
+        import json as _json
+        try:
+            pretty = _json.dumps(act, ensure_ascii=False, indent=2)
+        except Exception:
+            pretty = str(act)
+        buf = self._actions_json_tv.get_buffer()
+        buf.set_text(pretty, -1)
+        # Run-Button je nach Setting
+        try:
+            self.btn_run.set_sensitive(bool(self._http_trigger_enabled))
+        except Exception:
+            pass
+        # Form anzeigen
+        try:
+            self._actions_detail_stack.set_visible_child_name("form")
+        except Exception:
+            pass
+
+    def _actions_bind_form(self, action: dict) -> None:
+        # Gemeinsame Felder
+        self.ed_name_entry.set_text(str(action.get("name") or ""))
+        typ = str(action.get("type") or "http").lower()
+        if typ not in ("http", "shell"):
+            typ = "http"
+        self.ed_type_combo.set_active_id(typ)
+
+        # HTTP
+        self.ed_http_method.set_active_id(str(action.get("method", "GET")).upper() or "GET")
+        self.ed_http_url.set_text(str(action.get("url", "") or ""))
+
+        # SHELL
+        self.ed_shell_cmd.set_text(str(action.get("command", "") or ""))
+        try:
+            import json as _json
+            args_pretty = _json.dumps(action.get("args", []), ensure_ascii=False)
+        except Exception:
+            args_pretty = "[]"
+        args_buf = self.ed_shell_args_tv.get_buffer()
+        args_buf.set_text(args_pretty, -1)
+        self.ed_shell_use_switch.set_active(bool(action.get("use_shell", False)))
+
+        # Sichtbarkeit
+        self._actions_update_type_visibility()
+
+    def _actions_update_type_visibility(self) -> None:
+        t = self.ed_type_combo.get_active_id() or "http"
+        self.http_box.set_visible(t == "http")
+        self.shell_box.set_visible(t == "shell")
+
+    def _actions_on_type_changed(self, _combo: Gtk.ComboBoxText) -> None:
+        self._actions_update_type_visibility()
 
     def _on_actions_source_changed(self, _combo: Gtk.ComboBoxText) -> None:
         active_id = self.actions_source.get_active_id() or "clipboard"
         self.actions_text.set_sensitive(active_id == "text")
-        # Liste neu aufbauen, damit die [src=...] Badges in jeder Aktionszeile
-        # die aktuell gewählte Quelle anzeigen.
-        try:
-            self.refresh_actions_list()
-        except Exception:
-            pass
+        # kein vollständiger Reload nötig
 
     def _get_settings_map(self) -> dict:
         app = self.get_application()
@@ -872,9 +1392,16 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception:
             return {}
 
+    def _on_action_run_current_clicked(self, _btn: Gtk.Button) -> None:
+        act = self._actions_find_by_name(self._actions_selected_name)
+        if not act:
+            self.actions_result.set_text(_("No action selected."))
+            return
+        # Verwende existierende Runner-Logik
+        self._on_action_run_clicked(_btn, act, None, None)
 
     def _on_action_run_clicked(self, _btn: Gtk.Button, action: dict, override_combo: Optional[Gtk.ComboBoxText] = None, override_entry: Optional[Gtk.Entry] = None) -> None:
-        # Determine source and text (per-row override hat Vorrang, sonst globale Quelle)
+        # Determine source and text (global oder override – hier i.d.R. global)
         src_id = None
         try:
             if override_combo is not None:
@@ -916,229 +1443,8 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception:
             pass
         self.refresh_actions_list()
-        self._rebuild_triggers_editor()
 
-    # --- Actions Editor helpers (inline, raw JSON first phase) ---
-
-    def _build_action_row(self, action: dict, run_enabled: bool) -> Gtk.ListBoxRow:
-        """
-        Build a row showing an action expander with preview and an inline raw JSON editor.
-        """
-        name = str(action.get("name") or "(unnamed)")
-        typ = str(action.get("type") or "").lower()
-        # header preview
-        if typ == "http":
-            method = str(action.get("method") or "GET").upper()
-            url = str(action.get("url") or "")
-            preview = f"{method} {url}" if url else method
-        else:
-            cmd = str(action.get("command") or "")
-            preview = cmd or "(no command)"
-
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title = Gtk.Label(label=name)
-        title.set_xalign(0.0)
-        title.set_wrap(True)
-        title.set_hexpand(True)
-        # kompaktes Preview (Quelle-Override wird in der Zeile separat editiert)
-        subt = Gtk.Label(label=f"[{typ}] {preview}")
-        subt.set_xalign(0.0)
-        subt.set_wrap(True)
-        subt.get_style_context().add_class("dim-label")
-        header.append(title)
-        header.append(subt)
-
-        # Editor area (raw JSON)
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        tv = Gtk.TextView()
-        tv.set_monospace(True)
-        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        buf = tv.get_buffer()
-        import json as _json
-        try:
-            pretty = _json.dumps(action, ensure_ascii=False, indent=2)
-        except Exception:
-            pretty = str(action)
-        buf.set_text(pretty, -1)
-
-        # Formular-Editor (zusätzlich zum Raw-JSON)
-        form_frame = Gtk.Frame(label="Formular")
-        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        form.set_margin_top(6)
-        form.set_margin_bottom(6)
-
-        # Gemeinsame Felder: name, type
-        name_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        name_lbl = Gtk.Label(label="Name:")
-        name_lbl.set_xalign(0.0)
-        name_entry = Gtk.Entry()
-        name_entry.set_text(name)
-        name_entry.set_hexpand(True)
-        name_row.append(name_lbl); name_row.append(name_entry)
-        form.append(name_row)
-
-        type_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        type_lbl = Gtk.Label(label="Type:")
-        type_lbl.set_xalign(0.0)
-        type_combo = Gtk.ComboBoxText()
-        type_combo.append("http", "http")
-        type_combo.append("shell", "shell")
-        type_combo.set_active_id(typ if typ in ("http","shell") else "http")
-        type_row.append(type_lbl); type_row.append(type_combo)
-        form.append(type_row)
-
-        # HTTP Felder
-        http_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        http_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        method_lbl = Gtk.Label(label="Method:")
-        method_lbl.set_xalign(0.0)
-        method_combo = Gtk.ComboBoxText()
-        method_combo.append("GET", "GET"); method_combo.append("POST", "POST")
-        method_combo.set_active_id(str(action.get("method","GET")).upper())
-        url_lbl = Gtk.Label(label="URL:")
-        url_lbl.set_xalign(0.0)
-        url_entry = Gtk.Entry()
-        url_entry.set_hexpand(True)
-        url_entry.set_text(str(action.get("url","")))
-        http_row1.append(method_lbl); http_row1.append(method_combo); http_row1.append(url_lbl); http_row1.append(url_entry)
-        http_box.append(http_row1)
-
-        # Shell Felder
-        shell_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        sh_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        cmd_lbl = Gtk.Label(label="Command:")
-        cmd_lbl.set_xalign(0.0)
-        cmd_entry = Gtk.Entry()
-        cmd_entry.set_hexpand(True)
-        cmd_entry.set_text(str(action.get("command","")))
-        sh_row1.append(cmd_lbl); sh_row1.append(cmd_entry)
-        shell_box.append(sh_row1)
-
-        sh_row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        args_lbl = Gtk.Label(label="Args (JSON array):")
-        args_lbl.set_xalign(0.0)
-        args_tv = Gtk.TextView(); args_tv.set_monospace(True)
-        try:
-            import json as _json
-            _args_pretty = _json.dumps(action.get("args", []), ensure_ascii=False)
-        except Exception:
-            _args_pretty = "[]"
-        args_tv.get_buffer().set_text(_args_pretty, -1)
-        args_sw = Gtk.ScrolledWindow(); args_sw.set_min_content_height(40); args_sw.set_child(args_tv)
-        sh_row2.append(args_lbl); sh_row2.append(args_sw)
-        shell_box.append(sh_row2)
-
-        sh_row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        sh_switch_lbl = Gtk.Label(label="Use shell:")
-        sh_switch_lbl.set_xalign(0.0)
-        use_shell_switch = Gtk.Switch()
-        use_shell_switch.set_active(bool(action.get("use_shell", False)))
-        sh_row3.append(sh_switch_lbl); sh_row3.append(use_shell_switch)
-        shell_box.append(sh_row3)
-
-        # Sichtbarkeit abhängig vom Typ
-        def _toggle_type(_c):
-            t = type_combo.get_active_id() or "http"
-            http_box.set_visible(t == "http")
-            shell_box.set_visible(t == "shell")
-            return False
-        _toggle_type(None)
-        type_combo.connect("changed", _toggle_type)
-
-        form.append(http_box); form.append(shell_box)
-
-        # Save (Form)
-        form_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        form_save_btn = Gtk.Button(label="Save (Form)")
-        form_save_btn.connect("clicked", self._on_action_form_save_clicked, name, name_entry, type_combo, method_combo, url_entry, cmd_entry, args_tv, use_shell_switch)
-        form_btns.append(form_save_btn)
-        form.append(form_btns)
-
-        form_frame.set_child(form)
-        vbox.append(form_frame)
-
-        # Raw JSON Editor
-        sc = Gtk.ScrolledWindow()
-        sc.set_min_content_height(140)
-        sc.set_child(tv)
-        vbox.append(sc)
-
-        # Quelle (Override) – optional pro Aktion editierbar
-        ovbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        ovlabel = Gtk.Label(label="Quelle (Override):")
-        ovlabel.set_xalign(0.0)
-        ovbox.append(ovlabel)
-
-        ovcombo = Gtk.ComboBoxText()
-        ovcombo.append("global", "Global (oben)")
-        ovcombo.append("clipboard", "Clipboard")
-        ovcombo.append("primary", "Primary")
-        ovcombo.append("text", "Text")
-        ovcombo.set_active_id("global")
-        ovbox.append(ovcombo)
-
-        oventry = Gtk.Entry()
-        oventry.set_placeholder_text("Text für Override=Text …")
-        oventry.set_sensitive(False)
-        oventry.set_hexpand(True)
-        ovbox.append(oventry)
-
-        def _ov_changed(_c):
-            try:
-                oventry.set_sensitive((ovcombo.get_active_id() or "global") == "text")
-            except Exception:
-                pass
-            return False
-        ovcombo.connect("changed", _ov_changed)
-
-        vbox.append(ovbox)
-
-        # Buttons: Run / Save / Cancel / Duplicate / Delete
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-        run_btn = Gtk.Button(label="Run")
-        run_btn.set_sensitive(run_enabled)
-        run_btn.connect("clicked", self._on_action_run_clicked, action, ovcombo, oventry)
-        btns.append(run_btn)
-
-        save_btn = Gtk.Button(label="Save")
-        save_btn.connect("clicked", self._on_action_save_clicked, tv, name)
-        btns.append(save_btn)
-
-        cancel_btn = Gtk.Button(label="Cancel")
-        cancel_btn.connect("clicked", self._on_action_cancel_clicked)
-        btns.append(cancel_btn)
-
-        dup_btn = Gtk.Button(label="Duplicate")
-        dup_btn.connect("clicked", self._on_action_duplicate_clicked, name)
-        btns.append(dup_btn)
-
-        del_btn = Gtk.Button(label="Delete")
-        del_btn.connect("clicked", self._on_action_delete_clicked, name)
-        btns.append(del_btn)
-
-        # per-row status
-        status = Gtk.Label(label="")
-        status.set_xalign(0.0)
-
-        vbox.append(btns)
-        vbox.append(status)
-
-        # Wrap into expander
-        exp = Gtk.Expander()
-        exp.set_child(vbox)
-        exp.set_hexpand(True)
-        exp.set_margin_top(4)
-        # expander header must be a widget; using a box with two labels
-        header_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        header_row.append(header)
-        exp.set_label_widget(header_row)
-
-        row = Gtk.ListBoxRow()
-        row.set_child(exp)
-        # attach some refs for status updates
-        row._wbridge_status_label = status  # type: ignore[attr-defined]
-        return row
+    # --- Actions: Speichern/Duplicate/Delete (Master-Detail) ---
 
     def _get_textview_text(self, tv: Gtk.TextView) -> str:
         buf = tv.get_buffer()
@@ -1146,11 +1452,85 @@ class MainWindow(Gtk.ApplicationWindow):
         end = buf.get_end_iter()
         return buf.get_text(start, end, True)
 
-    def _on_action_save_clicked(self, _btn: Gtk.Button, tv: Gtk.TextView, original_name: str) -> None:
-        # Parse JSON, validate, write back into actions.json (replace by original_name or rename)
+    def _on_actions_save_form_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            original_name = self._actions_selected_name or ""
+            if not original_name:
+                self.actions_result.set_text(_("Save (Form) failed: no action selected"))
+                return
+            payload = load_actions_raw()
+            actions = payload.get("actions", [])
+            # finde Original
+            src = None
+            for a in actions:
+                if str(a.get("name") or "") == original_name:
+                    src = a
+                    break
+            if src is None:
+                self.actions_result.set_text(_("Save (Form) failed: original action not found"))
+                return
+
+            # baue neues Objekt
+            new_name = self.ed_name_entry.get_text().strip()
+            typ = (self.ed_type_combo.get_active_id() or "http").lower()
+            if not new_name:
+                self.actions_result.set_text(_("Validation failed: action.name must not be empty"))
+                return
+            obj = dict(src)  # optional Felder erhalten
+            obj["name"] = new_name
+            obj["type"] = typ
+            if typ == "http":
+                obj["method"] = (self.ed_http_method.get_active_id() or "GET").upper()
+                obj["url"] = (self.ed_http_url.get_text() or "").strip()
+            else:
+                obj["command"] = (self.ed_shell_cmd.get_text() or "").strip()
+                import json as _json
+                args_text = self._get_textview_text(self.ed_shell_args_tv).strip()
+                try:
+                    parsed_args = _json.loads(args_text) if args_text else []
+                    if not isinstance(parsed_args, list):
+                        raise ValueError("args must be a JSON array")
+                except Exception as e:
+                    self.actions_result.set_text(f"Validation failed (args): {e}")
+                    return
+                obj["args"] = parsed_args
+                obj["use_shell"] = bool(self.ed_shell_use_switch.get_active())
+
+            ok, err = validate_action_dict(obj)
+            if not ok:
+                self.actions_result.set_text(f"Validation failed: {err}")
+                return
+
+            # ersetze oder hänge an
+            replaced = False
+            for i, a in enumerate(actions):
+                if str(a.get("name") or "") == original_name:
+                    actions[i] = obj
+                    replaced = True
+                    break
+            if not replaced:
+                actions.append(obj)
+            payload["actions"] = actions
+            backup = write_actions_config(payload)
+
+            # reload und UI aktualisieren
+            app = self.get_application()
+            try:
+                new_cfg = load_actions()
+                setattr(app, "_actions", new_cfg)
+            except Exception:
+                pass
+            self._actions_selected_name = new_name
+            self.refresh_actions_list()
+            self.actions_result.set_text(f"Action saved (form) (backup: {backup})")
+        except Exception as e:
+            self.actions_result.set_text(f"Save (Form) failed: {e!r}")
+
+    def _on_actions_save_json_clicked(self, _btn: Gtk.Button) -> None:
         try:
             import json as _json
-            raw_text = self._get_textview_text(tv)
+            original_name = self._actions_selected_name or ""
+            raw_text = self._get_textview_text(self._actions_json_tv)
             obj = _json.loads(raw_text)
             if not isinstance(obj, dict):
                 raise ValueError("editor content must be a JSON object")
@@ -1161,13 +1541,12 @@ class MainWindow(Gtk.ApplicationWindow):
 
             payload = load_actions_raw()
             actions = payload.get("actions", [])
-            # Check name collisions if renamed
+
             new_name = str(obj.get("name") or "").strip()
             if not new_name:
-                self.actions_result.set_text("Validation failed: action.name must not be empty")
+                self.actions_result.set_text(_("Validation failed: action.name must not be empty"))
                 return
 
-            # replace or rename
             replaced = False
             for i, a in enumerate(actions):
                 if str(a.get("name") or "") == original_name:
@@ -1175,98 +1554,26 @@ class MainWindow(Gtk.ApplicationWindow):
                     replaced = True
                     break
             if not replaced:
-                # if original missing (race), append
                 actions.append(obj)
 
-            # if name changed and triggers reference original_name, keep as-is (user can adjust in Triggers editor later)
             payload["actions"] = actions
-
             backup = write_actions_config(payload)
-            # reload actions into app
+
+            # reload und UI aktualisieren
             app = self.get_application()
             try:
                 new_cfg = load_actions()
                 setattr(app, "_actions", new_cfg)
             except Exception:
                 pass
+            self._actions_selected_name = new_name
             self.refresh_actions_list()
-            try:
-                self._logger.info("actions.save ok name=%s", new_name)
-            except Exception:
-                pass
-            self.actions_result.set_text(f"Action saved (backup: {backup})")
+            self.actions_result.set_text(f"Action saved (JSON) (backup: {backup})")
         except Exception as e:
             self.actions_result.set_text(f"Save failed: {e!r}")
 
-    def _on_action_form_save_clicked(self, _btn: Gtk.Button, original_name: str, name_entry: Gtk.Entry, type_combo: Gtk.ComboBoxText, method_combo: Gtk.ComboBoxText, url_entry: Gtk.Entry, cmd_entry: Gtk.Entry, args_tv: Gtk.TextView, use_shell_switch: Gtk.Switch) -> None:
-        try:
-            # Load current payload and find original
-            payload = load_actions_raw()
-            actions = payload.get("actions", [])
-            src = None
-            for a in actions:
-                if str(a.get("name") or "") == original_name:
-                    src = a
-                    break
-            if src is None:
-                self.actions_result.set_text("Save (Form) failed: original action not found")
-                return
-            # Build new object from form
-            new_name = name_entry.get_text().strip()
-            typ = (type_combo.get_active_id() or "http").lower()
-            if not new_name:
-                self.actions_result.set_text("Validation failed: action.name must not be empty")
-                return
-            obj = dict(src)  # start from current to preserve optional fields
-            obj["name"] = new_name
-            obj["type"] = typ
-            if typ == "http":
-                obj["method"] = (method_combo.get_active_id() or "GET").upper()
-                obj["url"] = (url_entry.get_text() or "").strip()
-            else:
-                obj["command"] = (cmd_entry.get_text() or "").strip()
-                # args from JSON textview
-                import json as _json
-                args_text = self._get_textview_text(args_tv).strip()
-                try:
-                    parsed_args = _json.loads(args_text) if args_text else []
-                    if not isinstance(parsed_args, list):
-                        raise ValueError("args must be a JSON array")
-                except Exception as e:
-                    self.actions_result.set_text(f"Validation failed (args): {e}")
-                    return
-                obj["args"] = parsed_args
-                obj["use_shell"] = bool(use_shell_switch.get_active())
-            # Validate
-            ok, err = validate_action_dict(obj)
-            if not ok:
-                self.actions_result.set_text(f"Validation failed: {err}")
-                return
-            # Replace or append
-            replaced = False
-            for i, a in enumerate(actions):
-                if str(a.get("name") or "") == original_name:
-                    actions[i] = obj
-                    replaced = True
-                    break
-            if not replaced:
-                actions.append(obj)
-            payload["actions"] = actions
-            backup = write_actions_config(payload)
-            # reload app actions
-            app = self.get_application()
-            try:
-                new_cfg = load_actions()
-                setattr(app, "_actions", new_cfg)
-            except Exception:
-                pass
-            self.refresh_actions_list()
-            self.actions_result.set_text(f"Action saved (form) (backup: {backup})")
-        except Exception as e:
-            self.actions_result.set_text(f"Save (Form) failed: {e!r}")
-
     def _on_action_cancel_clicked(self, _btn: Gtk.Button) -> None:
-        # Simply reload actions from disk and rebuild list
+        # Reload actions from disk and re-bind selection
         try:
             app = self.get_application()
             new_cfg = load_actions()
@@ -1275,20 +1582,20 @@ class MainWindow(Gtk.ApplicationWindow):
             pass
         self.refresh_actions_list()
 
-    def _on_action_duplicate_clicked(self, _btn: Gtk.Button, original_name: str) -> None:
+    def _on_action_duplicate_current_clicked(self, _btn: Gtk.Button) -> None:
         try:
+            original_name = self._actions_selected_name or ""
             payload = load_actions_raw()
             actions = payload.get("actions", [])
             src = next((a for a in actions if str(a.get("name") or "") == original_name), None)
             if not src:
-                self.actions_result.set_text("Duplicate failed: source action not found")
+                self.actions_result.set_text(_("Duplicate failed: source action not found"))
                 return
             import copy as _copy
             dup = _copy.deepcopy(src)
             base = str(src.get("name") or "Action")
             new_name = base + " (copy)"
             names = {str(a.get("name") or "") for a in actions}
-            # ensure uniqueness
             idx = 2
             while new_name in names:
                 new_name = f"{base} (copy {idx})"
@@ -1304,6 +1611,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 setattr(app, "_actions", new_cfg)
             except Exception:
                 pass
+            self._actions_selected_name = new_name
             self.refresh_actions_list()
             try:
                 self._logger.info("actions.duplicate ok source=%s new=%s", original_name, new_name)
@@ -1313,14 +1621,18 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception as e:
             self.actions_result.set_text(f"Duplicate failed: {e!r}")
 
-    def _on_action_delete_clicked(self, _btn: Gtk.Button, name: str) -> None:
+    def _on_action_delete_current_clicked(self, _btn: Gtk.Button) -> None:
         try:
+            name = self._actions_selected_name or ""
+            if not name:
+                self.actions_result.set_text(_("Delete: no action selected"))
+                return
             payload = load_actions_raw()
             actions = payload.get("actions", [])
             before = len(actions)
             actions = [a for a in actions if str(a.get("name") or "") != name]
             if len(actions) == before:
-                self.actions_result.set_text("Delete: action not found")
+                self.actions_result.set_text(_("Delete: action not found"))
                 return
             # Remove triggers that reference the deleted action
             triggers = payload.get("triggers", {})
@@ -1338,6 +1650,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 setattr(app, "_actions", new_cfg)
             except Exception:
                 pass
+            self._actions_selected_name = None
             self.refresh_actions_list()
             try:
                 self._logger.info("actions.delete ok name=%s", name)
@@ -1379,8 +1692,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 setattr(app, "_actions", new_cfg)
             except Exception:
                 pass
+            self._actions_selected_name = name
             self.refresh_actions_list()
-            self._rebuild_triggers_editor()
             try:
                 self._logger.info("actions.add ok name=%s", name)
             except Exception:
@@ -1409,10 +1722,10 @@ class MainWindow(Gtk.ApplicationWindow):
         alias_entry = Gtk.Entry()
         alias_entry.set_text(alias)
         alias_entry.set_width_chars(18)
-        box.append(Gtk.Label(label="Alias:"))
+        box.append(Gtk.Label(label=_("Alias:")))
         box.append(alias_entry)
 
-        box.append(Gtk.Label(label="Action:"))
+        box.append(Gtk.Label(label=_("Action:")))
         action_combo = Gtk.ComboBoxText()
         for n in action_names:
             action_combo.append(n, n)
@@ -1423,7 +1736,7 @@ class MainWindow(Gtk.ApplicationWindow):
             action_combo.set_active(0)
         box.append(action_combo)
 
-        del_btn = Gtk.Button(label="Delete")
+        del_btn = Gtk.Button(label=_("Delete"))
         del_btn.connect("clicked", self._on_trigger_row_delete_clicked, alias_entry)
         box.append(del_btn)
 
@@ -1466,7 +1779,7 @@ class MainWindow(Gtk.ApplicationWindow):
                         alias = alias_entry.get_text().strip()
                         action_name = action_combo.get_active_id() or ""
                         if not alias:
-                            self.actions_result.set_text("Save Triggers failed: alias must not be empty")
+                            self.actions_result.set_text(_("Save Triggers failed: alias must not be empty"))
                             return
                         if alias in seen_aliases:
                             self.actions_result.set_text(f"Save Triggers failed: duplicate alias '{alias}'")
@@ -1503,6 +1816,325 @@ class MainWindow(Gtk.ApplicationWindow):
             self.actions_result.set_text(f"Triggers saved (backup: {backup})")
         except Exception as e:
             self.actions_result.set_text(f"Save Triggers failed: {e!r}")
+
+    # --- Shortcuts Editor helpers ---
+
+    def _shortcuts_on_reload_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            self._shortcuts_reload()
+            self.shortcuts_result.set_text(_("Reloaded shortcuts."))
+        except Exception as e:
+            self.shortcuts_result.set_text(f"Reload failed: {e!r}")
+
+    def _shortcuts_on_add_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            # Erzeuge leere editierbare Row (wbridge-managed, noch nicht installiert)
+            item = {
+                "full_path": None,
+                "suffix": None,
+                "is_managed": True,
+                "name": "New Shortcut",
+                "command": "",
+                "binding": ""
+            }
+            row = self._shortcuts_build_row(item)
+            self.shortcuts_list.append(row)
+            # Fokus auf Name
+            try:
+                getattr(row, "_wbridge_name_entry").grab_focus()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self.shortcuts_result.set_text(_("New shortcut row added (not yet saved)."))
+        except Exception as e:
+            self.shortcuts_result.set_text(f"Add failed: {e!r}")
+
+    def _shortcuts_on_row_delete_clicked(self, _btn: Gtk.Button, row: Gtk.ListBoxRow) -> None:
+        try:
+            is_managed = bool(getattr(row, "_wbridge_is_managed", False))
+            if not is_managed:
+                self.shortcuts_result.set_text(_("Delete not allowed for non-wbridge entries."))
+                return
+            suffix = getattr(row, "_wbridge_suffix", None)
+            if suffix:
+                try:
+                    gnome_shortcuts.remove_binding(suffix)
+                except Exception as e:
+                    self.shortcuts_result.set_text(f"Remove failed: {e!r}")
+                    # continue to remove row visually
+            # Entferne Row aus der Liste
+            self.shortcuts_list.remove(row)
+            # Option: direkt reloaden, um Basis-Array neu einzulesen
+            self._shortcuts_reload()
+            self.shortcuts_result.set_text(_("Shortcut removed."))
+        except Exception as e:
+            self.shortcuts_result.set_text(f"Delete failed: {e!r}")
+
+    def _shortcuts_on_save_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            # Sammle existierende Suffixe aus dem System, um Kollisionen zu vermeiden
+            current = self._shortcuts_read_items(include_foreign=True)
+            existing_suffixes: set[str] = {str(it.get("suffix")) for it in current if isinstance(it.get("suffix"), str)}
+            changed = 0
+
+            # Validierung und Anwendung
+            child = self.shortcuts_list.get_first_child()
+            while child is not None:
+                if isinstance(child, Gtk.ListBoxRow):
+                    is_managed = bool(getattr(child, "_wbridge_is_managed", False))
+                    if is_managed:
+                        name_e = getattr(child, "_wbridge_name_entry", None)
+                        cmd_e = getattr(child, "_wbridge_cmd_entry", None)
+                        bind_e = getattr(child, "_wbridge_bind_entry", None)
+                        old_suffix = getattr(child, "_wbridge_suffix", None)
+
+                        name = (name_e.get_text() if name_e else "").strip()
+                        cmd = (cmd_e.get_text() if cmd_e else "").strip()
+                        bind = (bind_e.get_text() if bind_e else "").strip()
+
+                        if not name:
+                            self.shortcuts_result.set_text(_("Validation failed: name must not be empty"))
+                            return
+                        if not cmd:
+                            self.shortcuts_result.set_text(_("Validation failed: command must not be empty"))
+                            return
+                        if not bind:
+                            self.shortcuts_result.set_text(_("Validation failed: binding must not be empty"))
+                            return
+
+                        desired_suffix = self._shortcuts_compute_suffix(name, existing_suffixes, prefer=old_suffix)
+                        # Wenn sich der Suffix ändert, altes Binding entfernen
+                        if old_suffix and desired_suffix != old_suffix:
+                            try:
+                                gnome_shortcuts.remove_binding(old_suffix)
+                            except Exception:
+                                pass
+                            existing_suffixes.discard(old_suffix)
+
+                        # Install/Update
+                        gnome_shortcuts.install_binding(desired_suffix, name, cmd, bind)
+                        setattr(child, "_wbridge_suffix", desired_suffix)
+                        existing_suffixes.add(desired_suffix)
+                        changed += 1
+                child = child.get_next_sibling()
+
+            # Nach dem Speichern neu laden + Konflikte prüfen
+            self._shortcuts_reload()
+            self.shortcuts_result.set_text(f"Saved shortcuts: {changed}")
+        except Exception as e:
+            self.shortcuts_result.set_text(f"Save failed: {e!r}")
+
+    def _shortcuts_compute_suffix(self, name: str, existing_suffixes: set[str], prefer: Optional[str] = None) -> str:
+        # Bestimme deterministischen Suffix aus Name; halte prefer, falls noch passend
+        import re
+        norm = re.sub(r"[^a-z0-9\\-]+", "-", name.lower()).strip("-")
+        base = f"wbridge-{norm or 'unnamed'}"
+        suffix = base + "/"
+        if prefer and prefer.startswith("wbridge-") and prefer.endswith("/") and prefer not in existing_suffixes:
+            return prefer
+        if suffix not in existing_suffixes:
+            return suffix
+        i = 2
+        while True:
+            cand = f"{base}-{i}/"
+            if cand not in existing_suffixes:
+                return cand
+            i += 1
+
+    def _shortcuts_read_items(self, include_foreign: bool) -> list[dict]:
+        # Lesen aller Custom-Keybindings
+        items: list[dict] = []
+        try:
+            base = Gio.Settings.new(gnome_shortcuts.BASE_SCHEMA)  # type: ignore
+            paths = list(base.get_strv(gnome_shortcuts.BASE_KEY))  # type: ignore
+        except Exception:
+            return items
+
+        for p in paths:
+            try:
+                full_path = str(p)
+                if not full_path.startswith(gnome_shortcuts.PATH_PREFIX):
+                    continue
+                suffix = full_path[len(gnome_shortcuts.PATH_PREFIX):]
+                is_managed = suffix.startswith("wbridge-")
+                if not include_foreign and not is_managed:
+                    continue
+                custom = Gio.Settings.new_with_path(gnome_shortcuts.CUSTOM_SCHEMA, full_path)  # type: ignore
+                name = str(custom.get_string("name") or "")
+                cmd = str(custom.get_string("command") or "")
+                bind = str(custom.get_string("binding") or "")
+                items.append({
+                    "full_path": full_path,
+                    "suffix": suffix,
+                    "is_managed": is_managed,
+                    "name": name,
+                    "command": cmd,
+                    "binding": bind
+                })
+            except Exception:
+                continue
+        return items
+
+    def _shortcuts_build_row(self, item: dict) -> Gtk.ListBoxRow:
+        is_managed = bool(item.get("is_managed"))
+        name = str(item.get("name") or "")
+        cmd = str(item.get("command") or "")
+        bind = str(item.get("binding") or "")
+        suffix = item.get("suffix") or None
+
+        grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+        c = 0
+
+        lbl_name = Gtk.Label(label=_("Name:"))
+        lbl_name.set_xalign(1.0)
+        grid.attach(lbl_name, c, 0, 1, 1); c += 1
+        name_e = Gtk.Entry()
+        name_e.set_text(name)
+        name_e.set_hexpand(True)
+        name_e.set_sensitive(is_managed)
+        grid.attach(name_e, c, 0, 1, 1); c += 1
+
+        lbl_cmd = Gtk.Label(label=_("Command:"))
+        lbl_cmd.set_xalign(1.0)
+        grid.attach(lbl_cmd, 0, 1, 1, 1)
+        cmd_e = Gtk.Entry()
+        cmd_e.set_text(cmd)
+        cmd_e.set_hexpand(True)
+        cmd_e.set_sensitive(is_managed)
+        grid.attach(cmd_e, 1, 1, 1, 1)
+
+        lbl_bind = Gtk.Label(label=_("Binding:"))
+        lbl_bind.set_xalign(1.0)
+        grid.attach(lbl_bind, 0, 2, 1, 1)
+        bind_e = Gtk.Entry()
+        bind_e.set_text(bind)
+        bind_e.set_hexpand(True)
+        bind_e.set_sensitive(is_managed)
+        grid.attach(bind_e, 1, 2, 1, 1)
+
+        # Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        if is_managed:
+            del_btn = Gtk.Button(label=_("Delete"))
+            row_ref = None
+            # row wird erst nachher erzeugt; Callback nutzt closure, daher setzen wir später
+            btn_box.append(del_btn)
+        grid.attach(btn_box, 1, 3, 1, 1)
+
+        row = Gtk.ListBoxRow()
+        row.set_child(grid)
+
+        # Row-Metadaten
+        row._wbridge_is_managed = is_managed  # type: ignore[attr-defined]
+        row._wbridge_suffix = suffix  # type: ignore[attr-defined]
+        row._wbridge_name_entry = name_e  # type: ignore[attr-defined]
+        row._wbridge_cmd_entry = cmd_e  # type: ignore[attr-defined]
+        row._wbridge_bind_entry = bind_e  # type: ignore[attr-defined]
+
+        # Delete-Handler jetzt mit Row-Ref
+        if is_managed:
+            def _on_del(_b):
+                self._shortcuts_on_row_delete_clicked(_b, row)
+            del_btn.connect("clicked", _on_del)  # type: ignore[name-defined]
+
+        return row
+
+    def _shortcuts_reload(self) -> None:
+        # Liste neu aufbauen und Konflikte anzeigen
+        include_foreign = bool(self.shortcuts_show_all.get_active()) if hasattr(self, "shortcuts_show_all") else False
+        items = self._shortcuts_read_items(include_foreign=include_foreign)
+
+        # Clear
+        child = self.shortcuts_list.get_first_child()
+        while child is not None:
+            self.shortcuts_list.remove(child)
+            child = self.shortcuts_list.get_first_child()
+
+        # Build rows
+        for it in items:
+            self.shortcuts_list.append(self._shortcuts_build_row(it))
+
+        # Konflikte prüfen
+        conflicts: dict[str, int] = {}
+        for it in items:
+            b = str(it.get("binding") or "")
+            if not b:
+                continue
+            conflicts[b] = conflicts.get(b, 0) + 1
+        msgs = []
+        for k, cnt in conflicts.items():
+            if cnt > 1:
+                msgs.append(f"'{k}' ×{cnt}")
+        self.shortcuts_conflicts_label.set_text((_('Conflicts: ') + ", ".join(msgs)) if msgs else "")
+
+    # --- Help & i18n helpers ---
+
+    def _help_panel(self, topic: str) -> Gtk.Widget:
+        try:
+            exp = Gtk.Expander(label=_("Help"))
+        except Exception:
+            exp = Gtk.Expander(label="Help")
+        try:
+            content = self._render_help(self._load_help_text(topic))
+            exp.set_child(content)
+        except Exception:
+            pass
+        exp.set_hexpand(True)
+        return exp
+
+    def _load_help_text(self, topic: str) -> str:
+        try:
+            path = Path(__file__).parent / "help" / "en" / f"{topic}.md"
+            if path.exists():
+                return path.read_text(encoding="utf-8", errors="replace")
+            return f"{topic} – help not found (resource missing)."
+        except Exception as e:
+            return f"Help load failed for topic '{topic}': {e!r}"
+
+    def _render_help(self, text: str) -> Gtk.Widget:
+        tv = Gtk.TextView()
+        tv.set_monospace(True)
+        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        tv.set_editable(False)
+        tv.set_cursor_visible(False)
+        buf = tv.get_buffer()
+        buf.set_text(text, -1)
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sc.set_min_content_height(160)
+        sc.set_child(tv)
+        return sc
+
+    # --- CSS helper ---
+
+    def _load_css(self) -> None:
+        try:
+            provider = Gtk.CssProvider()
+            css_path = Path(__file__).parent / "assets" / "style.css"
+            if css_path.exists():
+                provider.load_from_path(str(css_path))
+                display = Gdk.Display.get_default()
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except Exception:
+            pass
+
+    # --- Status helpers: Log tail ---
+
+    def _log_tail(self, max_lines: int = 200) -> list[str]:
+        try:
+            path = xdg_state_dir() / "bridge.log"
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            return lines[-max_lines:]
+        except Exception:
+            return []
+
+    def _on_log_refresh_clicked(self, _btn: Optional[Gtk.Button]) -> None:
+        try:
+            buf = self.log_tv.get_buffer()  # type: ignore[attr-defined]
+            text = "".join(self._log_tail(200))
+            buf.set_text(text, -1)
+        except Exception:
+            pass
 
     # --- File monitors (Auto-Reload for settings.ini and actions.json) ---
 
@@ -1547,7 +2179,7 @@ class MainWindow(Gtk.ApplicationWindow):
                             setattr(app, "_actions", new_cfg)
                             self.refresh_actions_list()
                             self._rebuild_triggers_editor()
-                            self.actions_result.set_text("Config reloaded from disk (actions.json).")
+                            self.actions_result.set_text(_("Config reloaded from disk (actions.json)."))
                         except Exception:
                             pass
                         self._actions_debounce_id = 0
@@ -1602,10 +2234,10 @@ class MainWindow(Gtk.ApplicationWindow):
             path = self.integ_path_entry.get_text().strip()
             # simple validations
             if not base.startswith("http://") and not base.startswith("https://"):
-                self.settings_result.set_text("Ungültige Base-URL (muss mit http:// oder https:// beginnen).")
+                self.settings_result.set_text(_("Invalid base URL (must start with http:// or https://)."))
                 return
             if not path.startswith("/"):
-                self.settings_result.set_text("Ungültiger Trigger-Pfad (muss mit '/' beginnen).")
+                self.settings_result.set_text(_("Invalid trigger path (must start with '/')."))
                 return
             # write
             set_integration_settings(
@@ -1617,11 +2249,11 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._logger.info("settings.integration.save enabled=%s base=%s path=%s", bool(enabled), base, path)
             except Exception:
                 pass
-            self.settings_result.set_text("Integration gespeichert.")
+            self.settings_result.set_text(_("Integration saved."))
             # reload to reflect new state
             self._reload_settings()
         except Exception as e:
-            self.settings_result.set_text(f"Fehler beim Speichern: {e!r}")
+            self.settings_result.set_text(_("Save failed: {err}").format(err=repr(e)))
 
     def _on_discard_integration_clicked(self, _btn: Gtk.Button) -> None:
         # Discard local edits and re-populate from disk
@@ -1672,7 +2304,9 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_profile_show_clicked(self, _btn: Gtk.Button) -> None:
         pid = self.profile_combo.get_active_id()
         if not pid or pid in ("none", "err"):
-            self.profile_result.set_text("Kein Profil ausgewählt.")
+            self.profile_result.set_text(_("No profile selected."))
+        if not pid or pid in ("none", "err"):
+            self.profile_result.set_text(_("No profile selected."))
             return
         try:
             info = pm_show_profile(pid)
@@ -1681,18 +2315,18 @@ class MainWindow(Gtk.ApplicationWindow):
             acts = info.get("actions", {})
             sc = info.get("shortcuts", {})
             summary = (
-                f"Profil: {meta.get('name', pid)} v{meta.get('version','')}\n"
-                f"Actions: {acts.get('count',0)} (Triggers: {', '.join(acts.get('triggers', [])[:8])})\n"
-                f"Shortcuts: {sc.get('count',0)}"
+                _("Profile: {name} v{version}").format(name=meta.get("name", pid), version=meta.get("version","")) + "\n"
+                + _("Actions: {count} (Triggers: {trigs})").format(count=acts.get("count",0), trigs=", ".join(acts.get("triggers", [])[:8])) + "\n"
+                + _("Shortcuts: {count}").format(count=sc.get("count",0))
             )
             self.profile_result.set_text(summary)
         except Exception as e:
-            self.profile_result.set_text(f"Fehler: {e!r}")
+            self.profile_result.set_text(_("Error: {err}").format(err=repr(e)))
 
     def _on_profile_install_clicked(self, _btn: Gtk.Button) -> None:
         pid = self.profile_combo.get_active_id()
         if not pid or pid in ("none", "err"):
-            self.profile_result.set_text("Kein Profil ausgewählt.")
+            self.profile_result.set_text(_("No profile selected."))
             return
         try:
             report = pm_install_profile(
@@ -1720,7 +2354,7 @@ class MainWindow(Gtk.ApplicationWindow):
             # Refresh settings and actions after install (in case settings changed)
             self._reload_settings()
         except Exception as e:
-            self.profile_result.set_text(f"Fehler: {e!r}")
+            self.profile_result.set_text(_("Error: {err}").format(err=repr(e)))
 
     def _on_install_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
         # Install GNOME shortcuts with priority:
@@ -1740,7 +2374,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 if b_command: bindings["command"] = b_command
                 if b_ui: bindings["ui_show"] = b_ui
                 gnome_shortcuts.install_recommended_shortcuts(bindings)
-                self.settings_result.set_text("GNOME Shortcuts installiert (settings.ini Priorität).")
+                self.settings_result.set_text(_("GNOME shortcuts installed (settings.ini takes priority)."))
                 return
 
             # 2) fallback to profile shortcuts if a profile is selected
@@ -1764,7 +2398,7 @@ class MainWindow(Gtk.ApplicationWindow):
                             installed += 1
                         except Exception:
                             skipped += 1
-                    self.settings_result.set_text(f"Profil‑Shortcuts installiert: installed={installed}, skipped={skipped}.")
+                    self.settings_result.set_text(_("Profile shortcuts installed: installed={installed}, skipped={skipped}.").format(installed=installed, skipped=skipped))
                     return
 
             # 3) default recommended bindings
@@ -1774,38 +2408,38 @@ class MainWindow(Gtk.ApplicationWindow):
                 "ui_show": "<Ctrl><Alt>u",
             }
             gnome_shortcuts.install_recommended_shortcuts(defaults)
-            self.settings_result.set_text("GNOME Shortcuts installiert (Default‑Empfehlungen).")
+            self.settings_result.set_text(_("GNOME shortcuts installed (default recommendations)."))
         except Exception as e:
-            self.settings_result.set_text(f"GNOME Shortcuts installieren fehlgeschlagen: {e!r}")
+            self.settings_result.set_text(_("Installing GNOME shortcuts failed: {err}").format(err=repr(e)))
 
     def _on_remove_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
         # Remove recommended shortcuts and, if a profile is selected, try to remove its shortcuts as well.
         try:
             gnome_shortcuts.remove_recommended_shortcuts()
-            msg = "Empfohlene GNOME Shortcuts entfernt."
+            msg = _("Recommended GNOME shortcuts removed.")
             pid = self.profile_combo.get_active_id() if hasattr(self, "profile_combo") else None
             if pid and pid not in ("none", "err", None):
                 rep = remove_profile_shortcuts(pid)
-                msg += f" Profil‑Shortcuts entfernt: removed={rep.get('removed',0)}, skipped={rep.get('skipped',0)}."
+                msg += _(" Profile shortcuts removed: removed={removed}, skipped={skipped}.").format(removed=rep.get('removed',0), skipped=rep.get('skipped',0))
             self.settings_result.set_text(msg)
         except Exception as e:
-            self.settings_result.set_text(f"GNOME Shortcuts entfernen fehlgeschlagen: {e!r}")
+            self.settings_result.set_text(_("Removing GNOME shortcuts failed: {err}").format(err=repr(e)))
 
     def _on_enable_autostart_clicked(self, _btn: Gtk.Button) -> None:
         try:
             from . import autostart
             ok = autostart.enable()
-            self.settings_result.set_text("Autostart aktiviert." if ok else "Autostart konnte nicht aktiviert werden.")
+            self.settings_result.set_text(_("Autostart enabled.") if ok else _("Autostart could not be enabled."))
         except Exception as e:
-            self.settings_result.set_text(f"Autostart aktivieren fehlgeschlagen: {e!r}")
+            self.settings_result.set_text(_("Enabling autostart failed: {err}").format(err=repr(e)))
 
     def _on_disable_autostart_clicked(self, _btn: Gtk.Button) -> None:
         try:
             from . import autostart
             ok = autostart.disable()
-            self.settings_result.set_text("Autostart deaktiviert." if ok else "Autostart konnte nicht deaktiviert werden.")
+            self.settings_result.set_text(_("Autostart disabled.") if ok else _("Autostart could not be disabled."))
         except Exception as e:
-            self.settings_result.set_text(f"Autostart deaktivieren fehlgeschlagen: {e!r}")
+            self.settings_result.set_text(_("Disabling autostart failed: {err}").format(err=repr(e)))
 
     # --- Button handlers (bestehende Set/Get-Tests) ---
 
@@ -1823,7 +2457,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 t = source.read_text_finish(res)
                 self.cb_label.set_text(f"Aktuell: {t!r}")
             except Exception as e:
-                self.cb_label.set_text(f"Lesefehler: {e!r}")
+                self.cb_label.set_text(_("Read error: {err}").format(err=repr(e)))
             return False
 
         cb.read_text_async(None, on_finish)
@@ -1842,7 +2476,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 t = source.read_text_finish(res)
                 self.pr_label.set_text(f"Aktuell: {t!r}")
             except Exception as e:
-                self.pr_label.set_text(f"Lesefehler: {e!r}")
+                self.pr_label.set_text(_("Read error: {err}").format(err=repr(e)))
             return False
 
         prim.read_text_async(None, on_finish)
