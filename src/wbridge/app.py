@@ -32,37 +32,13 @@ except Exception as e:
 from .logging_setup import setup_logging
 from .server_ipc import IPCServer
 from .platform import active_env_summary
-from .gui_window import MainWindow as UIMainWindow
+from .ui.main_window import MainWindow as UIMainWindow
 from .history import HistoryStore
 from .selection_monitor import SelectionMonitor
 from .config import load_settings, load_actions
 from .actions import run_action, ActionContext
 
 
-class MainWindow(Gtk.ApplicationWindow):
-    def __init__(self, application: Gtk.Application):
-        super().__init__(application=application)
-        self.set_title("wbridge")
-        self.set_default_size(800, 600)
-
-        # Placeholder content (to be replaced with real tabs: History, Actions, Settings, Status)
-        label = Gtk.Label(label="wbridge – Selection/Shortcut Bridge\n\n"
-                                "Initial scaffold.\n"
-                                "- Future tabs: History / Actions / Settings / Status\n"
-                                "- IPC server is running in this process.\n"
-                                "- Use GNOME custom shortcuts to execute the CLI (wbridge).\n\n"
-                                f"Environment: {active_env_summary()}\n")
-        label.set_wrap(True)
-        label.set_margin_top(24)
-        label.set_margin_bottom(24)
-        label.set_margin_start(24)
-        label.set_margin_end(24)
-        label.set_xalign(0.0)
-
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_child(label)
-        scrolled.set_vexpand(True)
-        self.set_child(scrolled)
 
 
 class BridgeApplication(Gtk.Application):

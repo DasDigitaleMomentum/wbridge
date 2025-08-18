@@ -12,6 +12,24 @@ Conventions
 
 ---
  
+## 2025-08-18 – UI split refactor to ui/*, wire pages, remove legacy PoC, docs sync
+
+- Timestamp: 2025-08-18
+- Scope:
+  - UI refactor: split monolithic gui_window.py into ui/main_window.py + ui/pages/* (History, Actions, Triggers, Shortcuts, Settings, Status) and ui/components/help_panel.py. Wired pages in MainWindow; switched import in app.py.
+  - Wiring: integrated HistoryPage, ActionsPage, TriggersPage; added ShortcutsPage, SettingsPage, StatusPage; adjusted file monitors so settings.ini changes call SettingsPage.reload_settings(); actions.json changes refresh ActionsPage and TriggersPage and notify ActionsPage.
+  - Docs: README Project Layout updated to ui/*; DESIGN Module Layout updated; implementation plan validated.
+  - Cleanup: prepared to remove legacy gui_window.py and wayland-bridge.py; follow-up deletion executed next.
+- Affected files:
+  - src/wbridge/ui/main_window.py (imports pages; stack wiring; settings/actions monitors adjusted)
+  - src/wbridge/ui/pages/{history_page.py, actions_page.py, triggers_page.py, shortcuts_page.py, settings_page.py, status_page.py} (added/implemented)
+  - src/wbridge/ui/components/help_panel.py
+  - src/wbridge/app.py (import MainWindow from ui.main_window)
+  - README.md, DESIGN.md (synced to new structure)
+- Notes:
+  - Old _page_* factory methods and helper code remain temporarily in MainWindow but are no longer used; slated for deletion in a follow-up cleanup.
+  - Feature parity maintained; no changes to data formats or IPC.
+
 ## 2025-08-17 – Step 8: Help & i18n, Hilfe‑Panels, CSS/Packaging, Doku
 
 - Timestamp: 2025-08-17
