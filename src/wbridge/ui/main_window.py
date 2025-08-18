@@ -65,7 +65,7 @@ class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, application: Gtk.Application):
         super().__init__(application=application)
         self.set_title("wbridge")
-        self.set_default_size(1000, 650)
+        self.set_default_size(1200, 880)
         self._logger = logging.getLogger("wbridge")
         # Cache für aktuelle Selektion (vermeidet Blocking-Reads auf dem GTK-Mainthread)
         self._cur_clip: str = ""
@@ -996,6 +996,118 @@ class MainWindow(Gtk.ApplicationWindow):
         except Exception:
             pass
         return True  # weiterlaufen
+
+    # --- Live-Update: Help mode (revealer/popover) ---
+
+    def apply_help_mode(self, mode: str | None = None) -> None:
+        """
+        Rebuild the header+help widgets of all pages to reflect the given help mode.
+        If mode is None, it is read from settings.ini [general].help_display_mode.
+        """
+        try:
+            if mode is None:
+                smap = self._get_settings_map()
+                mode = str((smap.get("general", {}) or {}).get("help_display_mode", "revealer"))
+            if mode not in ("revealer", "popover"):
+                mode = "revealer"
+        except Exception:
+            mode = "revealer"
+
+        return
+
+        def _top_container_for(page: Gtk.Widget) -> Gtk.Widget:
+            """
+            Returns the container where header+help are placed as the first two children.
+            For most pages this is the page itself; for Actions we wrapped content in a ScrolledWindow.
+            """
+            try:
+                # Detect ScrolledWindow wrapper (as used in Actions page)
+                first = page.get_first_child()
+                if isinstance(first, Gtk.ScrolledWindow):
+                    inner = first.get_child()
+                    if isinstance(inner, Gtk.Widget):
+                        return inner
+            except Exception:
+                pass
+            return page
+
+        def _rebuild(container: Gtk.Widget, topic: str, title: str, subtitle: str | None = None) -> None:
+            try:
+                # Build new help/header
+                from .components.help_panel import build_help_panel  # local import to avoid cycles
+                from .components.page_header import build_page_header
+                new_help = build_help_panel(topic, mode=mode)  # type: ignore[arg-type]
+                new_hdr = build_page_header(title, subtitle, new_help)
+
+                # Remove first two children (old header + old help)
+                # Caution: Gtk.Box API iteration
+                if hasattr(container, "get_first_child") and hasattr(container, "remove"):
+                    try:
+                        c0 = container.get_first_child()
+                        if c0 is not None:
+                            container.remove(c0)
+                        c1 = container.get_first_child()
+                        if c1 is not None:
+                            container.remove(c1)
+                    except Exception:
+                        pass
+                    # Prepend in reverse order to keep header before help
+                    try:
+                        container.prepend(new_help)  # type: ignore[attr-defined]
+                        container.prepend(new_hdr)   # type: ignore[attr-defined]
+                    except Exception:
+                        # Fallback: append (order header then help, may end up at bottom if prepend unsupported)
+                        container.add_css_class  # type: ignore[attr-defined]  # no-op to keep linters calm
+                        try:
+                            container.insert_child_after(new_hdr, None)  # type: ignore[attr-defined]
+                            container.insert_child_after(new_help, new_hdr)  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # Apply to all pages
+        try:
+            _rebuild(_top_container_for(self.history_page), "history", _("History"))
+        except Exception:
+            pass
+        try:
+            _rebuild(_top_container_for(self.actions_page), "actions", _("Actions"))
+        except Exception:
+            pass
+        try:
+            _rebuild(_top_container_for(self.triggers_page), "triggers", _("Triggers"))
+        except Exception:
+            pass
+        try:
+            _rebuild(_top_container_for(self.shortcuts_page), "shortcuts", _("Shortcuts"))
+        except Exception:
+            pass
+        try:
+            _rebuild(_top_container_for(self.settings_page), "settings", _("Settings"))
+        except Exception:
+            pass
+        try:
+            _rebuild(_top_container_for(self.status_page), "status", _("Status"))
+        except Exception:
+            pass
+
+        # Nachlauf: kleines Re-Layout, damit der neue Help-Modus überall sicher greift.
+        try:
+            def _after_apply():
+                try:
+                    # Fenster und Root neu zeichnen
+                    if hasattr(self, "queue_draw"):
+                        self.queue_draw()
+                    root = self.get_child()
+                    if root and hasattr(root, "queue_draw"):
+                        root.queue_draw()
+                except Exception:
+                    pass
+                return False
+            GLib.idle_add(_after_apply)  # type: ignore
+        except Exception:
+            pass
 
     def refresh_history(self, limit: int = 20) -> None:
         cb_items = self._history_list("clipboard", limit)

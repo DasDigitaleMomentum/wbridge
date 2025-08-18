@@ -21,6 +21,8 @@ from gi.repository import Gtk, GLib  # type: ignore
 
 from ...config import load_actions_raw, write_actions_config, load_actions  # type: ignore
 from ..components.help_panel import build_help_panel
+from ..components.page_header import build_page_header
+from ..components.cta_bar import build_cta_bar
 
 
 # i18n init (fallback to identity if no translations installed)
@@ -38,40 +40,50 @@ class TriggersPage(Gtk.Box):
         """Initialize the page with a reference to the MainWindow."""
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._main = main_window  # reference to MainWindow for app access
+        try:
+            self.set_hexpand(True)
+            self.set_vexpand(True)
+        except Exception:
+            pass
 
         self.set_margin_start(16)
         self.set_margin_end(16)
         self.set_margin_top(16)
         self.set_margin_bottom(16)
 
-        hdr = Gtk.Label(label=_("Triggers (Alias → Action)"))
-        hdr.set_xalign(0.0)
-        self.append(hdr)
+        # Scrollbarer Inhaltscontainer (CTA bleibt unten fix)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        try:
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+        except Exception:
+            pass
+        self.append(content_box)
+
+        _help = build_help_panel("triggers")
+        header = build_page_header(_("Triggers"), None, _help)
+        content_box.append(header)
+        content_box.append(_help)
 
         self.triggers_list = Gtk.ListBox()
         self.triggers_list.set_selection_mode(Gtk.SelectionMode.NONE)
         tr_scrolled = Gtk.ScrolledWindow()
-        tr_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        tr_scrolled.set_min_content_height(260)
-        tr_scrolled.set_child(self.triggers_list)
-        self.append(tr_scrolled)
-
-        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        add_btn = Gtk.Button(label=_("Add Trigger"))
-        add_btn.connect("clicked", self._on_triggers_add_clicked)
-        btns.append(add_btn)
-
-        save_btn = Gtk.Button(label=_("Save Triggers"))
-        save_btn.connect("clicked", self._on_triggers_save_clicked)
-        btns.append(save_btn)
-
-        self.append(btns)
-
-        # Help panel
+        tr_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        tr_scrolled.set_min_content_height(160)
         try:
-            self.append(build_help_panel("triggers"))
+            tr_scrolled.set_hexpand(True)
+            tr_scrolled.set_vexpand(True)
         except Exception:
             pass
+        tr_scrolled.set_child(self.triggers_list)
+        content_box.append(tr_scrolled)
+
+        add_btn = Gtk.Button(label=_("Add Trigger"))
+        add_btn.connect("clicked", self._on_triggers_add_clicked)
+        save_btn = Gtk.Button(label=_("Save Triggers"))
+        save_btn.connect("clicked", self._on_triggers_save_clicked)
+        self.append(build_cta_bar(add_btn, save_btn))
+
 
         # Initial populate
         try:

@@ -31,6 +31,8 @@ except Exception:
     _ = lambda s: s
 
 from ..components.help_panel import build_help_panel
+from ..components.page_header import build_page_header
+from ..components.cta_bar import build_cta_bar
 
 
 class HistoryPage(Gtk.Box):
@@ -40,6 +42,11 @@ class HistoryPage(Gtk.Box):
         """Initialize the page with a reference to the MainWindow."""
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._main = main_window  # reference to MainWindow for app access
+        try:
+            self.set_hexpand(True)
+            self.set_vexpand(True)
+        except Exception:
+            pass
 
         # Selection caches (kept to mirror current design)
         self._cur_clip: str = ""
@@ -53,33 +60,43 @@ class HistoryPage(Gtk.Box):
         self.set_margin_top(16)
         self.set_margin_bottom(16)
 
-        # Top description
-        history_desc = Gtk.Label(label=_("History (Clipboard / Primary)\n"
-                                         "• List of recent entries with actions: Set as Clipboard, Set as Primary, Swap (swaps the last two).\n"
-                                         "• Tip: CLI `wbridge selection set/get` also works."))
-        history_desc.set_wrap(True)
-        history_desc.set_xalign(0.0)
-        self.append(history_desc)
+        # Scrollbarer Inhaltscontainer (CTA bleibt unten fix)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        try:
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
+        except Exception:
+            pass
+        self.append(content_box)
 
-        # Controls: manual refresh + counter
-        hist_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        refresh_btn = Gtk.Button(label=_("Refresh"))
-        refresh_btn.connect("clicked", lambda _b: self.refresh())
-        hist_controls.append(refresh_btn)
+        _help = build_help_panel("history")
+        header = build_page_header(_("History"), None, _help)
+        content_box.append(header)
+        content_box.append(_help)
 
+        # Counter (dim label)
         self.hist_count = Gtk.Label(label=_("Entries: 0 / 0"))
         self.hist_count.set_xalign(0.0)
-        hist_controls.append(self.hist_count)
+        try:
+            self.hist_count.get_style_context().add_class("dim-label")
+        except Exception:
+            pass
+        content_box.append(self.hist_count)
 
-        self.append(hist_controls)
-
-        # Two-column grid
-        grid = Gtk.Grid(column_spacing=12, row_spacing=12)
-        grid.set_column_homogeneous(True)
 
         # Clipboard column
         cb_frame = Gtk.Frame(label=_("Clipboard"))
+        try:
+            cb_frame.set_hexpand(True)
+            cb_frame.set_vexpand(True)
+        except Exception:
+            pass
         cb_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        try:
+            cb_box.set_hexpand(True)
+            cb_box.set_vexpand(True)
+        except Exception:
+            pass
         cb_box.set_margin_start(10)
         cb_box.set_margin_end(10)
         cb_box.set_margin_top(10)
@@ -121,15 +138,30 @@ class HistoryPage(Gtk.Box):
         self.cb_list = Gtk.ListBox()
         self.cb_list.set_selection_mode(Gtk.SelectionMode.NONE)
         cb_scrolled = Gtk.ScrolledWindow()
-        cb_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        cb_scrolled.set_min_content_height(180)
+        cb_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        cb_scrolled.set_min_content_height(140)
+        try:
+            cb_scrolled.set_hexpand(True)
+            cb_scrolled.set_vexpand(True)
+        except Exception:
+            pass
         cb_scrolled.set_child(self.cb_list)
         cb_box.append(cb_scrolled)
         cb_frame.set_child(cb_box)
 
         # Primary column
         pr_frame = Gtk.Frame(label=_("Primary Selection"))
+        try:
+            pr_frame.set_hexpand(True)
+            pr_frame.set_vexpand(True)
+        except Exception:
+            pass
         pr_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        try:
+            pr_box.set_hexpand(True)
+            pr_box.set_vexpand(True)
+        except Exception:
+            pass
         pr_box.set_margin_start(10)
         pr_box.set_margin_end(10)
         pr_box.set_margin_top(10)
@@ -171,21 +203,53 @@ class HistoryPage(Gtk.Box):
         self.pr_list = Gtk.ListBox()
         self.pr_list.set_selection_mode(Gtk.SelectionMode.NONE)
         pr_scrolled = Gtk.ScrolledWindow()
-        pr_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        pr_scrolled.set_min_content_height(180)
+        pr_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        pr_scrolled.set_min_content_height(140)
+        try:
+            pr_scrolled.set_hexpand(True)
+            pr_scrolled.set_vexpand(True)
+        except Exception:
+            pass
         pr_scrolled.set_child(self.pr_list)
         pr_box.append(pr_scrolled)
         pr_frame.set_child(pr_box)
 
-        grid.attach(cb_frame, 0, 0, 1, 1)
-        grid.attach(pr_frame, 1, 0, 1, 1)
-        self.append(grid)
-
-        # Help panel
+        md = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
         try:
-            self.append(build_help_panel("history"))
+            md.set_wide_handle(True)
+            if hasattr(md, "set_shrink_start_child"):
+                md.set_shrink_start_child(True)
+            if hasattr(md, "set_shrink_end_child"):
+                md.set_shrink_end_child(True)
+            if hasattr(md, "set_resize_start_child"):
+                md.set_resize_start_child(True)
+            if hasattr(md, "set_resize_end_child"):
+                md.set_resize_end_child(True)
         except Exception:
             pass
+        md.set_hexpand(True)
+        md.set_vexpand(True)
+        try:
+            md.set_start_child(cb_frame)
+            md.set_end_child(pr_frame)
+        except Exception:
+            pass
+        # initial position after first allocation (~50%)
+        def _hp_set_split():
+            try:
+                alloc = md.get_allocated_height()
+                pos = int(alloc * 0.50) if alloc > 0 else 300
+                md.set_position(pos)
+            except Exception:
+                pass
+            return False
+        GLib.idle_add(_hp_set_split)
+        content_box.append(md)
+
+        # Bottom CTA bar (Refresh)
+        refresh_btn = Gtk.Button(label=_("Refresh"))
+        refresh_btn.connect("clicked", lambda _b: self.refresh())
+        self.append(build_cta_bar(refresh_btn))
 
     # ---- Public API for MainWindow orchestration ----
 

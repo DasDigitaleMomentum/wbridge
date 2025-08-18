@@ -24,6 +24,8 @@ from gi.repository import Gtk, Gio  # type: ignore
 
 from ... import gnome_shortcuts  # type: ignore
 from ..components.help_panel import build_help_panel
+from ..components.page_header import build_page_header
+from ..components.cta_bar import build_cta_bar
 
 
 # i18n init (fallback to identity if no translations installed)
@@ -41,32 +43,32 @@ class ShortcutsPage(Gtk.Box):
         """Initialize the page with a reference to the MainWindow."""
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self._main = main_window  # reference to MainWindow for app access
+        try:
+            self.set_hexpand(True)
+            self.set_vexpand(True)
+        except Exception:
+            pass
 
         self.set_margin_start(16)
         self.set_margin_end(16)
         self.set_margin_top(16)
         self.set_margin_bottom(16)
 
-        # Header + hint
-        hdr = Gtk.Label(label=_("Shortcuts (GNOME Custom Keybindings)"))
-        hdr.set_xalign(0.0)
-        self.append(hdr)
-
-        hint = Gtk.Label(label=_("Only wbridge-managed entries are editable. Foreign entries optionally visible (read-only)."))
-        hint.set_wrap(True)
-        hint.set_xalign(0.0)
-        self.append(hint)
-
-        # PATH hint if 'wbridge' is missing
-        self.shortcuts_path_hint = Gtk.Label(label="")
-        self.shortcuts_path_hint.set_wrap(True)
-        self.shortcuts_path_hint.set_xalign(0.0)
+        # Scrollbarer Inhaltscontainer (CTA bleibt unten fix)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         try:
-            if shutil.which("wbridge") is None:
-                self.shortcuts_path_hint.set_text(_("Hint: 'wbridge' was not found in PATH. GNOME Shortcuts call 'wbridge'; install user-wide via pipx/pip --user or use an absolute path in the shortcuts."))
+            content_box.set_hexpand(True)
+            content_box.set_vexpand(True)
         except Exception:
             pass
-        self.append(self.shortcuts_path_hint)
+        self.append(content_box)
+
+        _help = build_help_panel("shortcuts")
+        header = build_page_header(_("Shortcuts"), None, _help)
+        content_box.append(header)
+        content_box.append(_help)
+
+
 
         # Controls: show-all (read-only), Add, Save, Reload
         ctrl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -87,39 +89,44 @@ class ShortcutsPage(Gtk.Box):
         self.shortcuts_show_all.connect("state-set", _on_show_all)
         ctrl.append(self.shortcuts_show_all)
 
-        btn_add = Gtk.Button(label=_("Add"))
-        btn_add.connect("clicked", self._on_add_clicked)
-        ctrl.append(btn_add)
 
-        btn_save = Gtk.Button(label=_("Save"))
-        btn_save.connect("clicked", self._on_save_clicked)
-        ctrl.append(btn_save)
 
-        btn_reload = Gtk.Button(label=_("Reload"))
-        btn_reload.connect("clicked", self._on_reload_clicked)
-        ctrl.append(btn_reload)
 
-        self.append(ctrl)
+        content_box.append(ctrl)
 
         # Conflicts label
         self.shortcuts_conflicts_label = Gtk.Label(label="")
         self.shortcuts_conflicts_label.set_xalign(0.0)
-        self.append(self.shortcuts_conflicts_label)
+        content_box.append(self.shortcuts_conflicts_label)
 
         # List
         self.shortcuts_list = Gtk.ListBox()
         self.shortcuts_list.set_selection_mode(Gtk.SelectionMode.NONE)
         sc = Gtk.ScrolledWindow()
-        sc.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sc.set_min_content_height(300)
+        try:
+            sc.set_hexpand(True)
+            sc.set_vexpand(True)
+        except Exception:
+            pass
         sc.set_child(self.shortcuts_list)
-        self.append(sc)
+        content_box.append(sc)
 
         # Result messages
         self.shortcuts_result = Gtk.Label(label="")
         self.shortcuts_result.set_wrap(True)
         self.shortcuts_result.set_xalign(0.0)
-        self.append(self.shortcuts_result)
+        content_box.append(self.shortcuts_result)
+
+        # Bottom CTA bar (Add/Save/Reload)
+        btn_add = Gtk.Button(label=_("Add"))
+        btn_add.connect("clicked", self._on_add_clicked)
+        btn_save = Gtk.Button(label=_("Save"))
+        btn_save.connect("clicked", self._on_save_clicked)
+        btn_reload = Gtk.Button(label=_("Reload"))
+        btn_reload.connect("clicked", self._on_reload_clicked)
+        self.append(build_cta_bar(btn_add, btn_save, btn_reload))
 
         # Initial load
         try:
@@ -127,11 +134,6 @@ class ShortcutsPage(Gtk.Box):
         except Exception:
             pass
 
-        # Help panel
-        try:
-            self.append(build_help_panel("shortcuts"))
-        except Exception:
-            pass
 
     # --- Public API ---------------------------------------------------------
 

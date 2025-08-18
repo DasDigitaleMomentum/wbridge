@@ -32,6 +32,8 @@ from ...config import (  # type: ignore
     validate_action_dict,
 )
 from ..components.help_panel import build_help_panel
+from ..components.page_header import build_page_header
+from ..components.cta_bar import build_cta_bar
 from .history_page import HistoryPage
 
 
@@ -52,6 +54,12 @@ class ActionsPage(Gtk.Box):
         self._main = main_window  # reference to MainWindow for app access
         self._history_page = history_page  # used to get current selection text
         self._logger = logging.getLogger("wbridge")
+        # ensure page expands within stack
+        try:
+            self.set_hexpand(True)
+            self.set_vexpand(True)
+        except Exception:
+            pass
 
         self.set_margin_start(16)
         self.set_margin_end(16)
@@ -62,13 +70,22 @@ class ActionsPage(Gtk.Box):
         self._actions_selected_name: Optional[str] = None
         self._http_trigger_enabled: bool = True
 
-        # Header/Description
-        actions_desc = Gtk.Label(label=_("Actions\n"
-                                         "• Defined actions (HTTP/Shell) loaded from ~/.config/wbridge/actions.json.\n"
-                                         "• Choose source: Clipboard / Primary / Text."))
-        actions_desc.set_wrap(True)
-        actions_desc.set_xalign(0.0)
-        self.append(actions_desc)
+        # Scrollable content container (keeps CTA bar fixed at bottom)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        try:
+            content_box.set_vexpand(True)
+            content_box.set_hexpand(True)
+        except Exception:
+            pass
+        # Wichtig: KEIN äußerer Scroller um die gesamte Seite.
+        # Stattdessen scrollen nur die Pane-Inhalte (Editor/Liste), damit der Paned
+        # die volle verfügbare Höhe bekommt und die Divider-Position wirkt.
+        self.append(content_box)
+
+        _help = build_help_panel("actions")
+        header = build_page_header(_("Actions"), None, _help)
+        content_box.append(header)
+        content_box.append(_help)
 
         # Controls row: source selection + optional text + reload/add
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -91,30 +108,40 @@ class ActionsPage(Gtk.Box):
         self.actions_text.set_hexpand(True)
         controls.append(self.actions_text)
 
-        reload_btn = Gtk.Button(label=_("Reload actions"))
-        reload_btn.connect("clicked", self._on_reload_actions_clicked)
-        controls.append(reload_btn)
 
-        add_action_btn = Gtk.Button(label=_("Add Action"))
-        add_action_btn.connect("clicked", self._on_add_action_clicked)
-        controls.append(add_action_btn)
-
-        self.append(controls)
+        content_box.append(controls)
 
         # Hint if HTTP trigger disabled
         self.actions_hint = Gtk.Label(label="")
         self.actions_hint.set_wrap(True)
         self.actions_hint.set_xalign(0.0)
-        self.append(self.actions_hint)
+        content_box.append(self.actions_hint)
 
-        # Master/Detail split
-        md = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        # Master/Detail split (use Paned for adjustable vertical split: editor above, list below)
+        md = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
+        try:
+            md.set_wide_handle(True)
+            if hasattr(md, "set_resize_start_child"):
+                md.set_resize_start_child(True)
+            if hasattr(md, "set_resize_end_child"):
+                md.set_resize_end_child(True)
+            if hasattr(md, "set_shrink_start_child"):
+                md.set_shrink_start_child(False)
+            if hasattr(md, "set_shrink_end_child"):
+                md.set_shrink_end_child(True)
+        except Exception:
+            pass
         md.set_hexpand(True)
         md.set_vexpand(True)
 
         # Left: list of actions
         left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        left_box.set_size_request(280, -1)
+        left_box.set_size_request(-1, -1)
+        try:
+            left_box.set_hexpand(True)
+            left_box.set_vexpand(True)
+        except Exception:
+            pass
         lbl_actions = Gtk.Label(label=_("Actions"))
         lbl_actions.set_xalign(0.0)
         left_box.append(lbl_actions)
@@ -123,12 +150,16 @@ class ActionsPage(Gtk.Box):
         self.actions_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.actions_list.connect("row-selected", self._on_actions_row_selected)
         left_scroll = Gtk.ScrolledWindow()
-        left_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        left_scroll.set_min_content_height(260)
+        left_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        left_scroll.set_min_content_height(180)
+        try:
+            left_scroll.set_hexpand(True)
+            left_scroll.set_vexpand(True)
+        except Exception:
+            pass
         left_scroll.set_child(self.actions_list)
         left_box.append(left_scroll)
 
-        md.append(left_box)
 
         # Right: editor area with stack (Form/JSON)
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -141,10 +172,20 @@ class ActionsPage(Gtk.Box):
 
         switcher = Gtk.StackSwitcher()
         switcher.set_stack(self._actions_detail_stack)
+        try:
+            switcher.set_hexpand(False)
+            switcher.set_halign(Gtk.Align.START)
+        except Exception:
+            pass
         right_box.append(switcher)
 
         # Form view
         form_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        try:
+            form_box.set_hexpand(True)
+            form_box.set_vexpand(True)
+        except Exception:
+            pass
 
         # Common fields
         row_name = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -206,6 +247,11 @@ class ActionsPage(Gtk.Box):
         self.ed_shell_args_tv.set_monospace(True)
         sh_args_sw = Gtk.ScrolledWindow()
         sh_args_sw.set_min_content_height(40)
+        try:
+            sh_args_sw.set_hexpand(True)
+            sh_args_sw.set_vexpand(True)
+        except Exception:
+            pass
         sh_args_sw.set_child(self.ed_shell_args_tv)
         sh_row2.append(sh_args_lbl)
         sh_row2.append(sh_args_sw)
@@ -253,6 +299,11 @@ class ActionsPage(Gtk.Box):
         self._actions_json_tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         json_sw = Gtk.ScrolledWindow()
         json_sw.set_min_content_height(220)
+        try:
+            json_sw.set_hexpand(True)
+            json_sw.set_vexpand(True)
+        except Exception:
+            pass
         json_sw.set_child(self._actions_json_tv)
         json_box.append(json_sw)
         btn_save_json = Gtk.Button(label=_("Save (JSON)"))
@@ -266,23 +317,192 @@ class ActionsPage(Gtk.Box):
             pass
 
         right_box.append(self._actions_detail_stack)
-        md.append(right_box)
-        self.append(md)
+        # Wrap editor area in its own scroller so the upper pane scrolls independently
+        right_scrolled = Gtk.ScrolledWindow()
+        right_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        try:
+            right_scrolled.set_min_content_height(320)
+        except Exception:
+            pass
+        try:
+            right_scrolled.set_hexpand(True)
+            right_scrolled.set_vexpand(True)
+        except Exception:
+            pass
+        right_scrolled.set_child(right_box)
+        try:
+            md.set_start_child(right_scrolled)
+            md.set_end_child(left_box)
+            # initial position ~58% editor, ~42% list
+            def _set_paned_pos():
+                try:
+                    alloc = md.get_allocated_height()
+                    # Feinkorrektur: ~45% oben (Editor), ~55% unten (Liste)
+                    pos = int(alloc * 0.62) if alloc > 0 else 520
+                    md.set_position(pos)
+                except Exception:
+                    pass
+                return False
+            # Robust: initiale Position nach allen Layout-Phasen setzen, um 0px-Fallback zu vermeiden
+            try:
+                def _apply_split():
+                    try:
+                        h = md.get_allocated_height()
+                        if (not h or h <= 0) and hasattr(self, "get_allocated_height"):
+                            h = self.get_allocated_height()
+                        if h and h > 0:
+                            pos = max(320, int(h * 0.62))  # oben ~62% (Editor), unten ~38% (Liste)
+                            md.set_position(pos)
+                    except Exception:
+                        pass
+                    return False
+
+                # 1) idle – nach erster Zeichnung
+                GLib.idle_add(_apply_split)
+
+                # 2) beim ersten non-zero size-allocate
+                _once = {"done": False}
+                def _on_md_alloc(_w, _alloc):
+                    try:
+                        if not _once["done"]:
+                            h = md.get_allocated_height()
+                            if (not h or h <= 0) and hasattr(self, "get_allocated_height"):
+                                h = self.get_allocated_height()
+                            if h and h > 0:
+                                pos = max(320, int(h * 0.62))
+                                md.set_position(pos)
+                                try:
+                                    self._actions_paned_initialized = True
+                                except Exception:
+                                    self._actions_paned_initialized = True  # type: ignore[attr-defined]
+                                _once["done"] = True
+                    except Exception:
+                        pass
+                    return False
+                md.connect("size-allocate", _on_md_alloc)
+
+                # 3) zusätzlich kurze Verzögerung (falls spätere Messungen die Größe erst stabilisieren)
+                GLib.timeout_add(150, _apply_split)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Halte die Split-Ratio beim Resize stabil und übernimm Nutzeränderungen:
+        # - _actions_paned_ratio speichert Verhältnis (position/height)
+        # - notify::position aktualisiert Ratio bei Nutzerdrag
+        # - size-allocate setzt Position bei Größenänderungen neu anhand Ratio
+        try:
+            self._actions_paned_ratio = 0.62
+        except Exception:
+            self._actions_paned_ratio = 0.62  # type: ignore[attr-defined]
+        try:
+            def _on_md_pos_notify(_w, _pspec):
+                try:
+                    if not bool(getattr(self, "_actions_paned_initialized", False)):
+                        return False
+                    h = md.get_allocated_height() or self.get_allocated_height()
+                    if h and h > 0 and hasattr(md, "get_position"):
+                        pos = md.get_position()
+                        r = float(pos) / float(h) if h > 0 else 0.45
+                        r = max(0.15, min(0.85, r))  # sane Grenzen
+                        self._actions_paned_ratio = r
+                except Exception:
+                    pass
+                return False
+            if hasattr(md, "connect"):
+                md.connect("notify::position", _on_md_pos_notify)
+            try:
+                self._actions_paned_initialized = False
+            except Exception:
+                self._actions_paned_initialized = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            _resize_guard = {"busy": False}
+            def _on_md_size_alloc(_w, _alloc):
+                try:
+                    if _resize_guard["busy"]:
+                        return False
+                    _resize_guard["busy"] = True
+                    h = md.get_allocated_height() or self.get_allocated_height()
+                    if h and h > 0:
+                        pos = max(320, int(h * 0.62))  # oben ~62% (Editor), unten ~38% (Liste)
+                        md.set_position(pos)
+                        try:
+                            self._actions_paned_initialized = True
+                        except Exception:
+                            self._actions_paned_initialized = True  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                finally:
+                    _resize_guard["busy"] = False
+                return False
+            md.connect("size-allocate", _on_md_size_alloc)
+        except Exception:
+            pass
+
+        content_box.append(md)
+
+        # Ensure initial split after page becomes visible/mapped and keep it sane
+        try:
+            self._actions_paned = md  # keep reference for later adjustments
+        except Exception:
+            pass
+        try:
+            def _ensure_split_position():
+                try:
+                    # determine height from paned, page or root (fallback)
+                    h = md.get_allocated_height()
+                    if (not h or h <= 0) and hasattr(self, "get_allocated_height"):
+                        h = self.get_allocated_height()
+                    if (not h or h <= 0):
+                        root = self.get_root()
+                        if root and hasattr(root, "get_allocated_height"):
+                            h = root.get_allocated_height()
+                    r = float(getattr(self, "_actions_paned_ratio", 0.62))
+                    pos = max(320, int((h or 800) * r))
+                    md.set_position(pos)
+                    try:
+                        self._actions_paned_initialized = True
+                    except Exception:
+                        self._actions_paned_initialized = True  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                return False
+
+            # Run after the widget is mapped the first time
+            if hasattr(md, "connect"):
+                try:
+                    md.connect("map", lambda *_a: GLib.idle_add(_ensure_split_position))
+                except Exception:
+                    pass
+            # Also react when this page toggles visible in the stack
+            try:
+                self.connect("notify::visible", lambda *_a: GLib.idle_add(_ensure_split_position))
+            except Exception:
+                pass
+            # Final delayed retries to defeat late allocations
+            GLib.timeout_add(300, _ensure_split_position)
+            GLib.timeout_add(700, _ensure_split_position)
+        except Exception:
+            pass
 
         # Result output
         self.actions_result = Gtk.Label(label="")
         self.actions_result.set_wrap(True)
         self.actions_result.set_xalign(0.0)
-        self.append(self.actions_result)
+        content_box.append(self.actions_result)
+
+        # Bottom CTA bar (Add/Reload)
+        add_action_btn2 = Gtk.Button(label=_("Add Action"))
+        add_action_btn2.connect("clicked", self._on_add_action_clicked)
+        reload_btn2 = Gtk.Button(label=_("Reload actions"))
+        reload_btn2.connect("clicked", self._on_reload_actions_clicked)
+        self.append(build_cta_bar(add_action_btn2, reload_btn2))
 
         # Initial visibility of http/shell fields
         self._actions_update_type_visibility()
-
-        # Help panel
-        try:
-            self.append(build_help_panel("actions"))
-        except Exception:
-            pass
 
     # --- Public helpers -----------------------------------------------------
 
