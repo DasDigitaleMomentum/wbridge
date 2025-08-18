@@ -12,6 +12,34 @@ Conventions
 
 ---
  
+## 2025-08-19 – UI-Polish: Popover-only Help, Responsivität, Actions-Split-Logik stabilisiert
+
+- Timestamp: 2025-08-19
+- Scope:
+  - Help: Revealer entfernt; „?“ öffnet Popover (≈65% Fensterbreite, min 520 px), Autohide, natürliche Breite; CSS `.help-popover` ergänzt; Breite folgt Window-Resize via Hook.
+  - Responsivität: History/Triggers/Shortcuts – äußere Page-Scroller entfernt; Inhalt wächst mit Fensterhöhe; Scroll nur in Listen/Editoren; CTA-Bar bleibt fix unten. History-Minheight von 120→140 px.
+  - Actions: Vertikaler Split Editor/Liste (start_child no-shrink, end_child shrink); Default-Ratio oben ≈0.62; Editor-Scroller min 320 px; robuste Initial-Position (map/visible/idle + kurze Retries + size-allocate); Ratio-Persistenz bei Resize; Guard gegen frühe Events.
+  - Status: newest-first Log, Follow alle 1 s, Scroll/Cursor an den Anfang, vexpand sichergestellt.
+  - Doku: DESIGN.md erweitert (Popover-only, Responsivität, Actions-Split, CSS, Markdown→Pango, Startgröße).
+- Affected files:
+  - src/wbridge/ui/components/page_header.py
+  - src/wbridge/ui/components/help_panel.py
+  - src/wbridge/assets/style.css
+  - src/wbridge/ui/pages/actions_page.py
+  - src/wbridge/ui/pages/history_page.py
+  - src/wbridge/ui/pages/triggers_page.py
+  - src/wbridge/ui/pages/shortcuts_page.py
+  - src/wbridge/ui/pages/status_page.py
+  - src/wbridge/ui/main_window.py (Startgröße)
+  - DESIGN.md
+- Tests (manuell):
+  - Nach Appstart und erstem Wechsel auf „Actions“: Editor oben ~62% Höhe, Liste unten ~38%; Nutzer-Drag bleibt über Resizes hinweg erhalten; keine 0px-Fallbacks.
+  - Popover-Breite passt sich Fenstergröße an; keine horizontale Scrollbar.
+  - Andere Seiten wachsen mit Fensterhöhe; Scroll nur in Inhalts-Scroller; CTA-Bar fix.
+- Notes:
+  - apply_help_mode() neutralisiert; frühere Help-Mode-Konfiguration entfernt/ignoriert.
+  - Weitere Feinschliffe möglich (Ratio-Default ±, History-MinHeight ±10 px).
+
 ## 2025-08-18 – UI split refactor to ui/*, wire pages, remove legacy PoC, docs sync
 
 - Timestamp: 2025-08-18
