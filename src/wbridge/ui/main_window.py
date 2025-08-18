@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gtk4 MainWindow for wbridge with Stack + StackSidebar UI (replaces Notebook).
+Gtk4 MainWindow for wbridge with Stack + StackSidebar UI (moved to ui.main_window).
 
 Navigation (left sidebar):
 - History
@@ -34,8 +34,8 @@ try:
 except Exception:
     _ = lambda s: s
 
-from .platform import active_env_summary, socket_path, xdg_state_dir, xdg_config_dir
-from .config import (
+from ..platform import active_env_summary, socket_path, xdg_state_dir, xdg_config_dir
+from ..config import (
     load_actions,
     load_settings,
     set_integration_settings,
@@ -43,15 +43,22 @@ from .config import (
     write_actions_config,
     validate_action_dict,
 )
-from .actions import run_action, ActionContext
-from . import gnome_shortcuts
-from .profiles_manager import (
+from ..actions import run_action, ActionContext
+from .. import gnome_shortcuts
+from ..profiles_manager import (
     list_builtin_profiles,
     show_profile as pm_show_profile,
     install_profile as pm_install_profile,
     load_profile_shortcuts,
     remove_profile_shortcuts,
 )
+from .pages.history_page import HistoryPage
+from .pages.actions_page import ActionsPage
+from .pages.triggers_page import TriggersPage
+from .pages.shortcuts_page import ShortcutsPage
+from .pages.settings_page import SettingsPage
+from .pages.status_page import StatusPage
+from .components.help_panel import build_help_panel
 
 
 class MainWindow(Gtk.ApplicationWindow):
@@ -78,18 +85,24 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Navigation: StackSidebar + Stack
         _sidebar, stack = self._build_navigation()
+        self.history_page = HistoryPage(self)
+        self.actions_page = ActionsPage(self, self.history_page)
+        self.triggers_page = TriggersPage(self)
+        self.shortcuts_page = ShortcutsPage(self)
+        self.settings_page = SettingsPage(self)
+        self.status_page = StatusPage(self)
 
-        # Seiten einhängen (Stub-Seiten für Triggers/Shortcuts, Content für History/Actions/Settings/Status)
-        stack.add_titled(self._page_history(), "history", _("History"))
-        stack.add_titled(self._page_actions(), "actions", _("Actions"))
-        stack.add_titled(self._page_triggers(), "triggers", _("Triggers"))
-        stack.add_titled(self._page_shortcuts(), "shortcuts", _("Shortcuts"))
-        stack.add_titled(self._page_settings(), "settings", _("Settings"))
-        stack.add_titled(self._page_status(), "status", _("Status"))
+        # Seiten einhängen
+        stack.add_titled(self.history_page, "history", _("History"))
+        stack.add_titled(self.actions_page, "actions", _("Actions"))
+        stack.add_titled(self.triggers_page, "triggers", _("Triggers"))
+        stack.add_titled(self.shortcuts_page, "shortcuts", _("Shortcuts"))
+        stack.add_titled(self.settings_page, "settings", _("Settings"))
+        stack.add_titled(self.status_page, "status", _("Status"))
 
         # initial population
-        self.refresh_actions_list()
-        self._rebuild_triggers_editor()
+        self.actions_page.refresh_actions_list()
+        self.triggers_page.rebuild_editor()
         # start file monitors (settings.ini, actions.json) for auto-reload
         self._init_file_monitors()
 
@@ -262,7 +275,7 @@ class MainWindow(Gtk.ApplicationWindow):
         history_box.append(grid)
         # Help panel
         try:
-            history_box.append(self._help_panel("history"))
+            history_box.append(build_help_panel("history"))
         except Exception:
             pass
 
@@ -485,7 +498,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Help panel
         try:
-            actions_box.append(self._help_panel("actions"))
+            actions_box.append(build_help_panel("actions"))
         except Exception:
             pass
 
@@ -530,7 +543,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Help panel
         try:
-            box.append(self._help_panel("triggers"))
+            box.append(build_help_panel("triggers"))
         except Exception:
             pass
 
@@ -623,7 +636,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Help panel
         try:
-            box.append(self._help_panel("shortcuts"))
+            box.append(build_help_panel("shortcuts"))
         except Exception:
             pass
 
@@ -897,7 +910,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Help panel
         try:
-            settings_box.append(self._help_panel("settings"))
+            settings_box.append(build_help_panel("settings"))
         except Exception:
             pass
 
@@ -963,7 +976,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         # Help panel
         try:
-            status_box.append(self._help_panel("status"))
+            status_box.append(build_help_panel("status"))
         except Exception:
             pass
 
@@ -973,14 +986,13 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _refresh_tick(self) -> bool:
         try:
-            self._update_current_labels_async()
+            self.history_page.update_current_labels_async()
         except Exception:
             pass
-        # Nur neu aufbauen, wenn Daten sich geändert haben
         try:
-            if getattr(self, "_hist_dirty", False):
-                self.refresh_history()
-                self._hist_dirty = False
+            if getattr(self.history_page, "_hist_dirty", False):
+                self.history_page.refresh()
+                self.history_page._hist_dirty = False
         except Exception:
             pass
         return True  # weiterlaufen
@@ -1308,7 +1320,10 @@ class MainWindow(Gtk.ApplicationWindow):
         GLib.idle_add(_select_initial)  # type: ignore
 
         # auch Triggers aktualisieren (Namen)
-        self._rebuild_triggers_editor()
+        try:
+            self.triggers_page.rebuild_editor()
+        except Exception:
+            pass
 
     def _on_actions_row_selected(self, _lb: Gtk.ListBox, row: Optional[Gtk.ListBoxRow]) -> None:
         if row is None:
@@ -1807,7 +1822,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 setattr(app, "_actions", new_cfg)
             except Exception:
                 pass
-            self.refresh_actions_list()
+            self.actions_page.refresh_actions_list()
             self._rebuild_triggers_editor()
             try:
                 self._logger.info("triggers.save ok count=%d", len(new_triggers))
@@ -2066,57 +2081,6 @@ class MainWindow(Gtk.ApplicationWindow):
                 msgs.append(f"'{k}' ×{cnt}")
         self.shortcuts_conflicts_label.set_text((_('Conflicts: ') + ", ".join(msgs)) if msgs else "")
 
-    # --- Help & i18n helpers ---
-
-    def _help_panel(self, topic: str) -> Gtk.Widget:
-        try:
-            exp = Gtk.Expander(label=_("Help"))
-        except Exception:
-            exp = Gtk.Expander(label="Help")
-        try:
-            content = self._render_help(self._load_help_text(topic))
-            exp.set_child(content)
-        except Exception:
-            pass
-        exp.set_hexpand(True)
-        return exp
-
-    def _load_help_text(self, topic: str) -> str:
-        try:
-            path = Path(__file__).parent / "help" / "en" / f"{topic}.md"
-            if path.exists():
-                return path.read_text(encoding="utf-8", errors="replace")
-            return f"{topic} – help not found (resource missing)."
-        except Exception as e:
-            return f"Help load failed for topic '{topic}': {e!r}"
-
-    def _render_help(self, text: str) -> Gtk.Widget:
-        tv = Gtk.TextView()
-        tv.set_monospace(True)
-        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        tv.set_editable(False)
-        tv.set_cursor_visible(False)
-        buf = tv.get_buffer()
-        buf.set_text(text, -1)
-        sc = Gtk.ScrolledWindow()
-        sc.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        sc.set_min_content_height(160)
-        sc.set_child(tv)
-        return sc
-
-    # --- CSS helper ---
-
-    def _load_css(self) -> None:
-        try:
-            provider = Gtk.CssProvider()
-            css_path = Path(__file__).parent / "assets" / "style.css"
-            if css_path.exists():
-                provider.load_from_path(str(css_path))
-                display = Gdk.Display.get_default()
-                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        except Exception:
-            pass
-
     # --- Status helpers: Log tail ---
 
     def _log_tail(self, max_lines: int = 200) -> list[str]:
@@ -2155,7 +2119,7 @@ class MainWindow(Gtk.ApplicationWindow):
                         return
                     def _reload():
                         try:
-                            self._reload_settings()
+                            self.settings_page.reload_settings()
                         except Exception:
                             pass
                         self._settings_debounce_id = 0
@@ -2177,9 +2141,12 @@ class MainWindow(Gtk.ApplicationWindow):
                             app = self.get_application()
                             new_cfg = load_actions()
                             setattr(app, "_actions", new_cfg)
-                            self.refresh_actions_list()
-                            self._rebuild_triggers_editor()
-                            self.actions_result.set_text(_("Config reloaded from disk (actions.json)."))
+                            try:
+                                self.actions_page.refresh_actions_list()
+                                self.actions_page.notify_config_reloaded()
+                            except Exception:
+                                pass
+                            self.triggers_page.rebuild_editor()
                         except Exception:
                             pass
                         self._actions_debounce_id = 0
@@ -2203,7 +2170,7 @@ class MainWindow(Gtk.ApplicationWindow):
             pass
         self._refresh_integration_status()
         self._populate_integration_edit()
-        self.refresh_actions_list()
+        self.actions_page.refresh_actions_list()
         try:
             self._logger.info("settings.reload ok")
         except Exception:
@@ -2427,7 +2394,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _on_enable_autostart_clicked(self, _btn: Gtk.Button) -> None:
         try:
-            from . import autostart
+            from .. import autostart
             ok = autostart.enable()
             self.settings_result.set_text(_("Autostart enabled.") if ok else _("Autostart could not be enabled."))
         except Exception as e:
@@ -2435,7 +2402,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _on_disable_autostart_clicked(self, _btn: Gtk.Button) -> None:
         try:
-            from . import autostart
+            from .. import autostart
             ok = autostart.disable()
             self.settings_result.set_text(_("Autostart disabled.") if ok else _("Autostart could not be disabled."))
         except Exception as e:
@@ -2480,3 +2447,17 @@ class MainWindow(Gtk.ApplicationWindow):
             return False
 
         prim.read_text_async(None, on_finish)
+
+    # --- CSS helper ---
+
+    def _load_css(self) -> None:
+        try:
+            provider = Gtk.CssProvider()
+            # ui/main_window.py -> parents[2] == src/wbridge
+            css_path = Path(__file__).resolve().parents[2] / "assets" / "style.css"
+            if css_path.exists():
+                provider.load_from_path(str(css_path))
+                display = Gdk.Display.get_default()
+                Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except Exception:
+            pass
