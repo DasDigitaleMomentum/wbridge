@@ -132,6 +132,45 @@ Notes
 - All page classes are Gtk.Box descendants and attach only newly created child widgets (no reparenting).
 - No Notebook tabs; navigation is StackSidebar + Stack for a modern GNOME UX.
 
+### Page Header, Help (Popover-only) und CTA-Bar
+- Der Help-Button („?“) öffnet ein Gtk.Popover; es gibt keinen Revealer-Modus mehr.
+- Popover-Breite dynamisch ≈65% der Fensterbreite (min 520 px), keine horizontale Scrollbar (Policy NEVER/AUTOMATIC), natürliche Breite wird propagiert. CSS-Klasse: `.help-popover` (mit Fallback `min-width` in CSS).
+- Popover ist relativ zum Help-Button verankert (`set_relative_to`), `autohide=True`, Breite wird bei Fenster-Resize per `size-allocate`-Hook nachgeführt.
+- CTA-Bar pro Seite fest am unteren Rand, gebaut mit `ui/components/cta_bar.py::build_cta_bar(...)`; sie liegt außerhalb der Inhalts-Scroller und bleibt damit fix.
+
+### Responsives Layout – Muster pro Seite
+- Kein äußerer Scroller für die gesamte Seite. Stattdessen wächst der Seitencontainer (`hexpand/vexpand=True`), und nur lange Inhaltsbereiche erhalten eigene `Gtk.ScrolledWindow`-Wrapper (`vexpand=True`). Die CTA-Bar bleibt außerhalb der Scroller.
+- History/Triggers/Shortcuts:
+  - Äußere Page-Scroller entfernt; die jeweiligen Listen befinden sich in eigenen ScrolledWindows (vexpand=True).
+  - Mindesthöhen leicht angehoben (History-Listen je 140 px) für ein stabileres Layout bei kleinen Fenstern.
+- Status:
+  - Log newest-first (neueste Zeilen oben), Follow-Switch (1 s), Cursor/Scroll an den Anfang; Log-Scroller `vexpand=True`.
+
+### Actions – Vertikaler Split (Editor oben, Liste unten)
+- `Gtk.Paned(orientation=VERTICAL)` mit:
+  - `set_shrink_start_child(False)` (Editor darf nicht schrumpfen),
+  - `set_shrink_end_child(True)` (Liste darf schrumpfen).
+- Standard-Split oben ≈0.62 (Editor), unten ≈0.38 (Liste).
+- Editor besitzt eigenen Scroller mit `min_content_height=320`.
+- Robuste Initialpositionierung:
+  - Split wird nach dem ersten Anzeigen (map/visible) gesetzt (via `GLib.idle_add`), zusätzlich kurze verzögerte Retries.
+  - `size-allocate`-Hook setzt die Position bei Größenänderungen gemäß Ratio neu.
+  - `notify::position` aktualisiert die Ratio bei Nutzer-Drag; ein Guard ignoriert frühe Events, bis der erste sinnvolle Split gesetzt ist.
+
+### CSS und Assets
+- `assets/style.css`:
+  - `.page-header`, `.page-subtitle.dim`, `.cta-bar`
+  - `.help-popover` und `.help-popover scrolledwindow { min-width: 520px; }`
+  - `.mono` für Monospace-Bereiche
+- `MainWindow` Startfenstergröße: `set_default_size(1200, 880)`.
+
+### Markdown → Pango
+- `ui/components/markdown.py::md_to_pango` konvertiert Minimal-Markdown (Headings, Bullets, Inline-/Fenced-Code, Bold/Italic) in Pango-Markup, gerendert in `Gtk.Label(use_markup=True)`.
+
+### Help-Mode: Konsolidierung
+- Der frühere Hilfe-Modus (Revealer/Popover) wurde konsolidiert: Popover-only ist der kanonische Modus.
+- `apply_help_mode()` in `MainWindow` ist neutralisiert; die Konfigurationsoption wurde entfernt.
+
 
 ## 5. Clipboard/Primary Monitoring and History
 
