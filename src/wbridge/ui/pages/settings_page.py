@@ -16,12 +16,11 @@ from __future__ import annotations
 
 from typing import Optional, Dict, Any
 
-import shutil
 import gettext
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # type: ignore
+from gi.repository import Gtk, GLib  # type: ignore
 
 from ...platform import socket_path, xdg_state_dir  # type: ignore
 from ...config import load_settings, set_integration_settings  # type: ignore
@@ -33,6 +32,7 @@ from ...profiles_manager import (  # type: ignore
     remove_profile_shortcuts,
 )
 from ..components.help_panel import build_help_panel
+from ..components.page_header import build_page_header
 from ... import gnome_shortcuts  # type: ignore
 
 
@@ -57,21 +57,12 @@ class SettingsPage(Gtk.Box):
         self.set_margin_top(16)
         self.set_margin_bottom(16)
 
-        desc = Gtk.Label(label=_("Settings\n• Basic information and actions."))
-        desc.set_wrap(True)
-        desc.set_xalign(0.0)
-        self.append(desc)
+        _help = build_help_panel("settings")
+        header = build_page_header(_("Settings"), None, _help)
+        self.append(header)
+        self.append(_help)
 
-        # PATH hint if 'wbridge' is missing
-        self.path_hint = Gtk.Label(label="")
-        self.path_hint.set_wrap(True)
-        self.path_hint.set_xalign(0.0)
-        try:
-            if shutil.which("wbridge") is None:
-                self.path_hint.set_text(_("Hint: 'wbridge' was not found in PATH. GNOME Shortcuts call 'wbridge'; install user-wide via pipx/pip --user or provide an absolute path in the shortcut command."))
-        except Exception:
-            pass
-        self.append(self.path_hint)
+
 
         # Basic info grid
         info_grid = Gtk.Grid(column_spacing=12, row_spacing=6)
@@ -290,11 +281,6 @@ class SettingsPage(Gtk.Box):
         self.settings_result.set_xalign(0.0)
         self.append(self.settings_result)
 
-        # Help panel
-        try:
-            self.append(build_help_panel("settings"))
-        except Exception:
-            pass
 
     # --- Settings helpers ----------------------------------------------------
 
@@ -359,6 +345,7 @@ class SettingsPage(Gtk.Box):
 
     # --- Button handlers -----------------------------------------------------
 
+
     def _on_reload_settings_clicked(self, _btn: Gtk.Button) -> None:
         self.reload_settings()
 
@@ -373,12 +360,13 @@ class SettingsPage(Gtk.Box):
             if not path.startswith("/"):
                 self.settings_result.set_text(_("Invalid trigger path (must start with '/')."))
                 return
+            # Persist integration settings
             set_integration_settings(
                 http_trigger_enabled=bool(enabled),
                 http_trigger_base_url=base,
                 http_trigger_trigger_path=path
             )
-            self.settings_result.set_text(_("Integration saved."))
+            self.settings_result.set_text(_("Settings saved."))
             self.reload_settings()
         except Exception as e:
             self.settings_result.set_text(_("Save failed: {err}").format(err=repr(e)))
