@@ -1,106 +1,179 @@
 # Actions
 
-Create, inspect, and run reusable actions against your current selection. The page uses a master–detail layout:
-- Left: list of actions loaded from `~/.config/wbridge/actions.json`
-- Right: shared editor for the selected action (Form and JSON tabs), plus a result area
+Problem & Goal
+You want to reuse the current text selection and send it to a tool or service (HTTP or Shell) with one click or shortcut. 
+The Actions page lets you create, inspect, and run reusable actions against your current selection — reliably on Wayland, without global key grabs.
 
-You can run actions against one of three sources:
-- Clipboard (default)
-- Primary Selection
-- Text (ad‑hoc text you provide)
-
----
-
-## Anatomy of an action
-
-Two action types are supported:
-
-1) HTTP action (`type: "http"`)
-- Method: `GET` or `POST`
-- URL: Full http/https URL
-- Optional extra fields (headers, params) may be present in the JSON, even if not exposed in the Form tab.
-
-2) Shell action (`type: "shell"`)
-- Command: Executable or script to run
-- Args: A JSON array of string arguments
-- Use shell: If enabled, executes via a system shell (e.g., `/bin/sh -c`) — use with care
-
-The selected source provides the input text (Clipboard or Primary) or the text you supply when Source = Text. The action runner passes this text to your action; for HTTP/Shell, the integration logic decides how to incorporate it (e.g., as a body, argument, or query param depending on your configuration and action semantics).
+What’s on this page
+- Vertical split: Editor on top (Form/JSON tabs, result area), Actions list below
+- Source selector at the top of the editor: dropdown + adjacent text entry (enabled only when Source = Text)
+- Buttons under the editor fields: Save (Form), Duplicate, Delete, Cancel, Run
+- Add Action / Reload actions buttons below the list
+- Run: Execute the selected action with the chosen source
 
 ---
 
-## Workflow
+## Key terms
 
-1) Select source
-- Combo next to the text field:
-  - Clipboard: Use current Clipboard content
-  - Primary: Use current Primary Selection content
-  - Text: Enable the adjacent entry and type your ad‑hoc input
-
-2) Manage actions
-- Reload actions: Re-read `actions.json` from disk and refresh the list.
-- Add Action: Create a new HTTP action with defaults. Names are de‑duplicated automatically.
-
-3) Edit the selected action (right side)
-- Form tab (recommended):
-  - Name: Unique identifier
-  - Type: `http` or `shell`
-  - HTTP fields: Method, URL
-  - Shell fields: Command, Args (JSON array), Use shell
-  - Save (Form): Validates and writes back to `actions.json`. A timestamped backup is created.
-
-- JSON tab (advanced):
-  - Raw JSON view of the action object
-  - Save (JSON): Validates and writes back to `actions.json`. A backup is created.
-
-- Other actions:
-  - Duplicate: Creates a copy with a unique name, then selects it
-  - Delete: Removes the selected action (and cleans up triggers that referenced it)
-  - Cancel: Discards local edits by reloading from disk
-
-4) Run
-- Run: Executes the action against the chosen source.
-- Results appear in the result area below the editor.
-- Note: If the HTTP integration is disabled, running HTTP actions may be unavailable. Enable it in Settings (HTTP trigger).
+- Action: A reusable operation you run on the current selection. Types:
+  - `http`: Send text to an HTTP endpoint (GET/POST; headers/body supported).
+  - `shell`: Run a local program with arguments (no shell unless explicitly enabled).
+- Source: Where the input text comes from:
+  - Clipboard (regular copy/paste buffer)
+  - Primary Selection (mouse selection; usually pasted with middle‑click)
+  - Text (ad‑hoc text you type for this run)
+- Placeholders: Variables you can reference in actions, resolved at runtime:
+  - `{text}`, `{text_url}`, `{selection.type}`
+  - `{history[0]}`, `{history[1]}`, …
+  - `{app.name}`, `{now.iso}`, and optionally config references like `{config.section.key}`
+- Result area: Shows success/failure and response snippets after running an action.
 
 ---
 
-## Validation and persistence
+## Process (overview)
 
-- Validation: The UI uses the project&#39;s `validate_action_dict` to ensure the minimal required structure and types.
-- Persistence: On save, changes are written to `~/.config/wbridge/actions.json`. A backup is created before overwriting.
-- Auto‑reload: File monitors refresh the in‑memory configuration and UI when changes are detected externally (edits from a text editor, etc.).
-
----
-
-## Tips
-
-- Naming: Use stable names; triggers refer to actions by name. Renaming an action will require reassigning triggers.
-- HTTP: Start with `GET` and a simple URL, then add headers/params as needed (via JSON when advanced fields apply).
-- Shell:
-  - Keep commands idempotent; the selected text is often user‑provided.
-  - Prefer explicit arguments via `Args (JSON array)`.
-  - Use “Use shell” only when you need a shell feature (pipes, globs, expansions) and accept the risks.
+1) Choose Source (Clipboard, Primary, or Text).
+2) Select or create an Action.
+3) Edit the Action (Form tab recommended; JSON tab for advanced fields).
+4) Save changes (writes to `~/.config/wbridge/actions.json`, with a backup).
+5) Run the Action.
+6) Inspect results; optionally apply output back to Clipboard/Primary (planned option).
 
 ---
 
-## Known limitations and roadmap notes
+## Step‑by‑step (quick start)
 
-- Timeout and on‑success behaviors are planned for a later step (optional v1). For example:
-  - `timeout_s`: Allow canceling long‑running requests.
-  - `on_success.apply_to`: Apply the result back to Clipboard/Primary automatically.
-- The Form tab surfaces the most common fields. Advanced/custom fields may require editing via JSON.
+1) Select Source (top of editor)
+   - Clipboard: use current Clipboard content
+   - Primary: use current Primary selection
+   - Text: type ad‑hoc text into the adjacent entry
+
+2) Add a new Action
+   - Click “Add Action”. A new action appears with defaults.
+   - Names are auto‑deduplicated.
+
+3) Edit in the Form tab
+   - Name: choose a stable, descriptive name (triggers refer to it)
+   - Type: `http` or `shell`
+   - HTTP fields: Method (GET/POST), URL (http/https)
+   - Shell fields: Command (executable), Args (JSON array), Use shell (only if you need shell features)
+   - Save (Form): validates and writes to `actions.json` (creates a timestamped backup)
+
+4) (Optional) Adjust advanced fields in the JSON tab
+   - Edit raw JSON if you need headers, body, params, or custom fields not shown in the Form
+   - Save (JSON): validates and persists with backup
+
+5) Run
+   - Click “Run” to execute the selected action with the chosen source
+   - See the result area for status and output
+   - If HTTP integration is disabled, running HTTP actions may be unavailable. Enable it in Settings.
+
+---
+
+## Examples
+
+HTTP – POST selected text
+- Goal: Send the current selection as JSON to a local API
+- Form (minimum):
+  - Type: `http`
+  - Method: `POST`
+  - URL: `http://localhost:8808/ingest`
+- JSON (body via advanced field in JSON tab):
+  ```json
+  {
+    "name": "Post to local API",
+    "type": "http",
+    "method": "POST",
+    "url": "http://localhost:8808/ingest",
+    "headers": { "Content-Type": "application/json" },
+    "body": { "text": "{text}", "source": "{selection.type}" }
+  }
+  ```
+
+HTTP – GET with query
+- Use URL placeholders directly:
+  ```
+  http://localhost:8808/search?q={text_url}
+  ```
+
+Shell – Uppercase
+```json
+{
+  "name": "Uppercase",
+  "type": "shell",
+  "command": "tr",
+  "args": ["a-z", "A-Z"],
+  "use_shell": false
+}
+```
+
+Shell – URL‑encode via Python
+```json
+{
+  "name": "URL encode (python)",
+  "type": "shell",
+  "command": "python3",
+  "args": ["-c", "import urllib.parse,sys;print(urllib.parse.quote(sys.stdin.read()))"],
+  "use_shell": false
+}
+```
+
+Tips for placeholders
+- `{text}`: raw input text
+- `{text_url}`: URL‑encoded input text
+- `{selection.type}`: `"clipboard"` or `"primary"`
+
+---
+
+## Validation & persistence
+
+- Validation: The UI validates required structure/type (e.g., Name non‑empty, Args is a JSON array).
+- Writeback: Saved to `~/.config/wbridge/actions.json` with a timestamped backup.
+- Auto‑reload: If the file changes on disk (edited in a text editor), UI refreshes via file monitors.
+
+---
+
+## Good practices
+
+- Stable names: Triggers reference actions by name; avoid frequent renames.
+- Start simple: Begin with GET/POST and `{text}`; add headers/body later as needed.
+- Shell safety:
+  - Prefer explicit Args over a single shell string.
+  - Only enable “Use shell” when you need pipes/globs/expansions and accept the risks.
+- Iteration loop:
+  - Keep the Status page open to watch logs while testing runs.
+  - Use History to quickly re‑apply or swap test values.
 
 ---
 
 ## Troubleshooting
 
-- Run is disabled or failing:
-  - Check “Settings > Integration” and ensure HTTP trigger is enabled if you rely on HTTP actions.
-  - Review logs on the “Status” page (Log tail).
-- Validation failures:
-  - Check that Names are non‑empty and unique.
-  - For shell: `Args` must be a JSON array (e.g., `["-n", "value"]`).
-- Unexpected action behavior:
-  - Inspect the raw JSON in the JSON tab.
-  - Review your command paths and environment (PATH, permissions).
+Run disabled or failing
+- Enable HTTP trigger in Settings if you rely on HTTP actions.
+- Check the Status page for logs (requests, errors).
+- Confirm the endpoint is reachable (Settings → Health check).
+
+Validation failures
+- Name must be non‑empty and unique.
+- Shell Args must be a JSON array of strings.
+- URL must start with `http://` or `https://`.
+
+Unexpected action behavior
+- Inspect raw JSON (JSON tab).
+- Review command paths and PATH environment; consider using absolute paths.
+
+---
+
+## Glossary & links
+
+- Clipboard: regular copy/paste buffer (Ctrl+C / Ctrl+V)
+- Primary Selection: mouse selection buffer (often middle‑click paste)
+- Triggers: alias → action mapping for easier invocation
+- Shortcuts: GNOME global keybindings that run `wbridge` CLI commands
+
+Related pages:
+- Triggers: `help/en/triggers.md`
+- Settings (HTTP trigger, profiles, shortcuts): `help/en/settings.md`
+- History (apply/swap): `help/en/history.md`
+- Shortcuts (GNOME custom keybindings): `help/en/shortcuts.md`
+- Status (logs): `help/en/status.md`

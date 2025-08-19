@@ -1,48 +1,76 @@
 # Triggers
 
-Map simple aliases to actions so you can invoke actions indirectly (from CLI, HTTP trigger, or UI features) without remembering long names. Triggers are stored in the same config as actions: `~/.config/wbridge/actions.json`.
+Problem & Goal
+You want to invoke actions by memorable short names (aliases) from CLI, HTTP, or shortcuts — without remembering long action names. 
+The Triggers page lets you map aliases to existing actions and save them to your configuration.
 
-On this page you can:
-- View and edit the trigger table (Alias → Action)
-- Add new rows
-- Delete rows
-- Save the table with validation
-
----
-
-## Concept
-
-- Alias: A short, human‑friendly identifier (e.g., `translate`, `send-to-server`, `open-ui`).
-- Action: The name of an existing action defined under `actions` in `actions.json`.
-
-When a trigger is invoked (e.g., via HTTP endpoint or CLI), wbridge resolves the alias to the referenced action and runs it with the current selection.
+What’s on this page
+- Table editor: Alias → Action mapping
+- Add/Delete rows
+- Save with validation (writes to `~/.config/wbridge/actions.json`)
+- Auto‑reload when the file changes on disk
 
 ---
 
-## UI operations
+## Key terms
 
-- Add Trigger: Appends a new row with empty Alias and a preselected Action (if any exist). Fill the alias and pick the target action.
-- Delete (row): Removes the row from the table. If you need to restore it, discard changes and reload from disk before saving.
-- Save Triggers:
-  - Validates aliases (non‑empty, unique)
-  - Validates that each selected Action exists
-  - Writes the updated `triggers` object back to `~/.config/wbridge/actions.json` (with a backup prior to write)
-- Reload (implicit):
-  - When actions/triggers change on disk (e.g., edited in a text editor), the UI auto‑reloads due to file monitors.
+- Trigger (alias): A short, human‑friendly name (e.g., `translate`, `prompt`, `open-ui`).
+- Action (target): The name of an existing action defined under `actions` in `actions.json`.
+- Triggers map: The `triggers` object inside `~/.config/wbridge/actions.json`:
+  ```json
+  {
+    "triggers": {
+      "upper": "Uppercase",
+      "ingest": "Post to local API"
+    }
+  }
+  ```
+
+Invocation sources
+- CLI: `wbridge trigger <alias> --from-primary|--from-clipboard`
+- HTTP: Available if HTTP trigger is enabled in Settings
+- Shortcuts: GNOME keybindings can execute `wbridge trigger <alias> ...`
 
 ---
 
-## Validation rules
+## Process (overview)
 
-- Alias must not be empty.
-- Aliases must be unique (no duplicates).
-- Each row must reference a valid Action by name (the Action must exist).
-- On save, the UI surfaces validation errors at the top (result label).
+1) Create or edit an alias in the table.
+2) Select a target Action (must already exist on the Actions page).
+3) Save (validates; writes to `actions.json` with backup).
+4) Invoke the alias from CLI, HTTP, or a GNOME Shortcut.
 
 ---
 
-## Example: actions.json (excerpt)
+## Step‑by‑step (quick start)
 
+1) Prepare actions
+   - Go to Actions and create at least one action (e.g., `Uppercase` or `Post to local API`).
+   - Use stable names — triggers reference action names.
+
+2) Add a trigger
+   - On the Triggers page, click “Add Trigger”.
+   - Enter an Alias (e.g., `upper`) and pick the target action (e.g., `Uppercase`).
+
+3) Save
+   - Click “Save Triggers”. The UI validates:
+     - Alias is non‑empty
+     - Aliases are unique
+     - Each row references an existing Action name
+
+4) Invoke
+   - CLI examples:
+     ```
+     wbridge trigger upper --from-clipboard
+     wbridge trigger ingest --from-primary
+     ```
+   - For HTTP invocation, enable the HTTP trigger in Settings and consult your base URL/paths there.
+
+---
+
+## Examples
+
+`~/.config/wbridge/actions.json` (excerpt)
 ```json
 {
   "actions": [
@@ -66,33 +94,68 @@ When a trigger is invoked (e.g., via HTTP endpoint or CLI), wbridge resolves the
 }
 ```
 
-- The table in the Triggers page corresponds to the `triggers` object.
-- If you rename an Action, you must update any triggers that reference it.
+CLI
+```
+# Use Primary Selection as input
+wbridge trigger upper --from-primary
+# Use Clipboard as input
+wbridge trigger ingest --from-clipboard
+```
+
+GNOME Shortcut (concept)
+- Command field: `wbridge trigger upper --from-primary`
+- Binding: e.g., `<Ctrl><Alt>p`
 
 ---
 
-## Workflows and tips
+## Validation & persistence
 
-- Start simple: Create a few actions first, then define triggers that point to them.
-- Stable names: Keep Action names stable; triggers reference action names.
-- Housekeeping: Deleting an Action will also remove triggers that reference it when performed via the Actions page.
+- Validation on Save:
+  - Alias must not be empty
+  - Aliases must be unique
+  - Each alias must reference an existing Action by name (case‑sensitive)
+- Persistence:
+  - Writes the `triggers` object to `~/.config/wbridge/actions.json`
+  - Creates a timestamped backup before write
+- Auto‑reload:
+  - Edits made externally are picked up by file monitors; revisit the page or wait briefly for debounce.
 
 ---
 
-## Trigger invocation (CLI and HTTP)
+## Good practices
 
-- CLI (example):
-  - `wbridge actions run --trigger upper --which clipboard`
-- HTTP (example):
-  - If the HTTP trigger is enabled in Settings, remote clients can call an endpoint that uses trigger aliases server‑side. See your integration settings for exact base URL and paths.
+- Keep aliases short and stable (don’t rename frequently).
+- Housekeeping: If you remove an Action on the Actions page, related triggers are cleaned up there.
+- Start simple: create a working action first, then add a trigger to it.
+- Naming conventions: lowercase and hyphens (e.g., `send-to-api`, `open-ui`).
 
 ---
 
 ## Troubleshooting
 
-- Save fails: “duplicate alias” or “alias must not be empty”
-  - Ensure all rows have a unique, non‑empty alias string.
-- Save fails: “action ‘X’ … not found”
-  - Verify the action exists and the name matches exactly (case‑sensitive).
-- Table doesn’t reflect external edits
-  - Wait a moment for file monitor debounce or press the Actions page “Reload actions” button and revisit the Triggers page.
+Save fails: “duplicate alias” or “alias must not be empty”
+- Ensure every row has a unique, non‑empty alias.
+
+Save fails: “action ‘X’ … not found”
+- Verify the action exists and the name matches exactly (case‑sensitive).
+
+Table doesn’t reflect external edits
+- Wait briefly for file monitor debounce or press the Actions page “Reload actions” and revisit Triggers.
+
+HTTP invocation doesn’t work
+- Enable HTTP trigger in Settings and verify Base URL/paths with the Health check.
+- Check the Status page log tail for errors.
+
+---
+
+## Glossary & links
+
+- Actions: reusable operations (HTTP/Shell) that consume the current selection
+- Triggers: alias → action mapping; short names for invoking actions
+- Shortcuts: GNOME keybindings that run `wbridge` CLI commands
+
+Related pages:
+- Actions: `help/en/actions.md`
+- Settings (HTTP trigger, profiles, shortcuts): `help/en/settings.md`
+- Shortcuts (GNOME custom keybindings): `help/en/shortcuts.md`
+- Status (logs): `help/en/status.md`
