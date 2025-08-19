@@ -7,6 +7,7 @@
 from __future__ import annotations
 import re
 from typing import List
+from html import escape as _html_escape
 
 
 _HEADING_1 = re.compile(r"^\s*# (.+?)\s*$")
@@ -20,23 +21,13 @@ _ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 
 
 def _escape_pango(text: str) -> str:
-    # Escape characters relevant to Pango markup
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")  # double-safety
-        .replace(">", "&gt;")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-    )
+    # Robust HTML escaping for Pango markup (no un-escaping)
+    return _html_escape(text, quote=False)
 
 
 def _escape_basic(text: str) -> str:
-    # Minimal escape for initial stage, to avoid breaking markup we insert later
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    # Basic HTML escaping; do not un-escape later
+    return _html_escape(text, quote=False)
 
 
 def _format_inline(text: str) -> str:
