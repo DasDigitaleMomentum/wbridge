@@ -1,72 +1,124 @@
 # Status
 
-Inspect your runtime environment and tail the application log for quick diagnostics.
+Problem & Goal
+You want to quickly understand your runtime environment and diagnose issues (HTTP integration, shortcuts, clipboard behavior). 
+The Status page summarizes environment details and shows a live log tail for fast troubleshooting.
 
-This page provides:
-- Environment summary (platform/Wayland/X11 context)
-- Backend info (GDK display, clipboard backend)
-- Quick hints about using the History page and CLI
-- Log tail (last 200 lines) with a manual Refresh
-
----
-
-## Environment and backend
-
-- Environment: A compact summary of key platform details (display/server, session, etc.) useful for support and debugging.
-- GDK Display / Clipboard: The GTK/GDK types in use for the display and clipboard. These confirm which backends are active in your current session.
-
-If GDK information is unavailable, an explanatory message is shown.
+What’s on this page
+- Environment summary (Wayland/X11 session, platform)
+- Backend info (GDK display/clipboard backends)
+- Quick hints to verify History and CLI behavior
+- Log tail (recent lines) with manual Refresh
 
 ---
 
-## Log tail
+## Key terms
 
-The log viewer shows the last 200 lines from:
+- Wayland/X11 session: Your desktop session type (`$XDG_SESSION_TYPE`). Wayland limits global key grabs by design.
+- GDK Display / Clipboard backend: GTK/GDK types in use (confirms which backends are active).
+- Log tail: Recent lines from the application log file:
+  ```
+  ~/.local/state/wbridge/bridge.log
+  ```
+- Health check: Quick HTTP GET to verify your configured HTTP trigger endpoint (see Settings).
+
+---
+
+## Process (overview)
+
+1) Check Environment summary to confirm session/backend.
+2) Review GDK Display/Clipboard info to ensure expected backends are active.
+3) Open the Status log tail and press Refresh when testing behaviors.
+4) Reproduce your workflow (selection, trigger, shortcut) and observe log entries.
+5) Use hints to correlate actions with logs; switch to relevant pages if needed.
+
+---
+
+## Step‑by‑step (quick diagnosis loop)
+
+1) Open Status and glance at Environment
+   - Confirm Wayland session (or X11 if applicable).
+   - Note platform bits relevant to clipboard behavior.
+
+2) Verify GDK backends
+   - Ensure the display/clipboard entries make sense for your session.
+   - If unavailable, the page shows an explanatory message.
+
+3) Keep the log tail visible
+   - Press “Refresh” to reload.
+   - Look for new entries while you trigger actions.
+
+4) Reproduce an action
+   - In Actions, Run an HTTP or Shell action.
+   - Or via CLI:
+     ```
+     wbridge selection get --which clipboard
+     wbridge action run --name "Your Action" --from-primary
+     ```
+   - Observe the Status log for operation results or errors.
+
+5) Narrow down
+   - If HTTP fails: verify Base URL/paths in Settings and run Health check.
+   - If shortcuts fail: visit Shortcuts to check conflicts and PATH hints.
+   - If clipboard/primary seems off: use History to Get/Set/Swap and confirm.
+
+---
+
+## Examples
+
+Run selection commands while watching the log
 ```
-~/.local/state/wbridge/bridge.log
+wbridge selection get --which clipboard
+wbridge selection set --which primary "hello"
+wbridge history list --which clipboard --limit 5
 ```
 
-- Refresh: Click "Refresh" to reload the view from disk.
-- Read-only: The viewer is read-only and monospaced for easier scanning.
-
-Use the log tail to monitor:
-- Actions and Triggers events
-- HTTP integration status and requests
-- Shortcuts install/remove operations
-- Errors and warnings from background components
+Invoke actions/triggers
+```
+wbridge trigger prompt --from-primary
+wbridge action run --name "Post to local API" --from-clipboard
+```
+Keep the Status page open and hit Refresh after each command to correlate user actions with log output.
 
 ---
 
-## Related pages
+## Good practices
 
-- History: Apply and swap recent selection values. Useful when verifying clipboard/primary behavior alongside the logs.
-- Settings: Configure the HTTP trigger and run a Health check. If the Health check fails, consult the log tail here.
-
----
-
-## CLI equivalents
-
-Many operations have CLI counterparts that also produce log entries:
-- Examples:
-  - `wbridge selection get --which clipboard`
-  - `wbridge selection set --which primary "text"`
-  - `wbridge actions run --name "Action Name" --which clipboard`
-
-Running these commands while keeping the Status page open helps correlate user actions with log output.
+- One place for truth: Use the Status page as your ground control for environment + logs.
+- Correlate: Run your CLI commands with Status open to see immediate effects.
+- Small steps: Change one thing at a time (e.g., Base URL), then Refresh and re‑test.
+- Cross‑check pages: Use History for buffer checks; Shortcuts for conflicts; Settings for HTTP health.
 
 ---
 
 ## Troubleshooting
 
-- No log output:
-  - Ensure the app has permission to write to `~/.local/state/wbridge/`.
-  - Try creating the directory and file manually if your environment requires it.
-- Health check or HTTP issues:
-  - Verify Base URL/Trigger Path in Settings.
-  - Look for connection errors or timeouts in the log.
-- Clipboard anomalies:
-  - Confirm whether your workflow uses Clipboard or Primary Selection.
-  - Check the History page to verify values and use Swap/Apply to reproduce issues.
-- Shortcuts not working:
-  - Confirm `wbridge` is on PATH (see Settings and Shortcuts pages for hints).
-  - Inspect the binding install/remove messages in the log.
+No log output
+- Ensure the app can write to `~/.local/state/wbridge/`.
+- Create the directory if your environment requires it; then try again.
+- Press Refresh and reproduce the action.
+
+Health check / HTTP issues
+- Verify Base URL and Trigger Path in Settings.
+- Ensure the endpoint is running and reachable.
+- Look for connection errors or timeouts in the log tail.
+
+Clipboard anomalies
+- Confirm whether your workflow uses Clipboard or Primary Selection.
+- Use History to Set/Get/Swap and validate behavior.
+- Remember: middle‑click paste typically uses Primary.
+
+Shortcuts not working
+- Ensure `wbridge` is on PATH or use an absolute command in the shortcut.
+- Check for binding conflicts (Shortcuts page).
+- If dconf writes lag, click Reload or restart GNOME Shell/session.
+
+---
+
+## Glossary & links
+
+- History: Apply/swap recent selection values — `help/en/history.md`
+- Actions: Create and run HTTP/Shell actions — `help/en/actions.md`
+- Triggers: Alias → Action mapping — `help/en/triggers.md`
+- Shortcuts: GNOME keybindings management — `help/en/shortcuts.md`
+- Settings: HTTP trigger, profiles, shortcuts, autostart — `help/en/settings.md`

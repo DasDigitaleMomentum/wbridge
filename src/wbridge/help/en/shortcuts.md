@@ -1,105 +1,157 @@
 # Shortcuts (GNOME Custom Keybindings)
 
-Manage GNOME custom keybindings with a clear policy:
-- Only wbridge‑managed entries (path suffix starting with `wbridge-`) are editable.
-- Foreign (non‑wbridge) entries can be optionally shown read‑only for auditing.
-- Conflicts are detected and summarized (e.g., `&#39;<Ctrl><Alt>p&#39; ×2`).
+Problem & Goal
+You want to trigger wbridge quickly with global shortcuts — without breaking Wayland rules or other apps. 
+The Shortcuts page lets you install, review, and edit GNOME custom keybindings that run `wbridge` commands.
 
-Backed by GNOME Settings schemas:
+What’s on this page
+- List of GNOME custom keybindings
+- Edit rows that are managed by wbridge (scope: `wbridge-...`)
+- Optional read‑only view of foreign entries (for auditing)
+- Add / Save / Reload controls
+- Conflicts summary (e.g., `&#39;<Ctrl><Alt>p&#39; ×2`)
+
+---
+
+## Key terms
+
+- GNOME Custom Keybindings: User‑defined shortcuts managed via `Gio.Settings`.
+- Managed scope: Only entries whose dconf path suffix starts with `wbridge-` are editable/deletable from this page.
+- Foreign entries: Any non‑wbridge entry (viewable optionally, read‑only).
+- Binding: Accelerator string (e.g., `<Ctrl><Alt>p`).
+- Command: The shell command run by GNOME (e.g., `wbridge trigger prompt --from-primary`).
+
+Backed by schemas
 - Base: `org.gnome.settings-daemon.plugins.media-keys`
 - Custom: `org.gnome.settings-daemon.plugins.media-keys.custom-keybinding`
 - Paths live under: `/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/`
 
-Each custom entry has:
-- `name` (string)
-- `command` (string)
-- `binding` (accelerator string, e.g., `<Ctrl><Alt>p`)
+---
+
+## Process (overview)
+
+1) Show all custom keybindings (optionally include foreign entries read‑only).
+2) Add or edit wbridge‑managed rows (name, command, binding).
+3) Save (validates; writes via `Gio.Settings`).
+4) Resolve any binding conflicts.
+5) Test your shortcut.
 
 ---
 
-## Page overview
+## Step‑by‑step (quick start)
 
-- Show all custom (read‑only): Toggle to include non‑wbridge entries. Those rows are not editable and cannot be deleted here.
-- Add: Creates a new editable row (not yet installed until you Save).
-- Save: Validates rows and writes changes via Gio.Settings.
-- Reload: Re‑reads all custom keybindings from GNOME Settings and rebuilds the list.
+1) Install recommended defaults (from Settings)
+   - Settings → “Install GNOME Shortcuts”.
+   - Default set (if no profile/settings override):
+     - Prompt: `<Ctrl><Alt>p`
+     - Command: `<Ctrl><Alt>m`
+     - Show UI: `<Ctrl><Alt>u`
 
-Result and conflict information is displayed below the list.
+2) Review on the Shortcuts page
+   - Toggle “Show all custom (read‑only)” to audit foreign entries.
+   - wbridge entries are editable; foreign entries remain read‑only.
 
----
+3) Add / Edit
+   - Click “Add” to create a new editable row.
+   - Provide:
+     - Name (non‑empty)
+     - Command (e.g., `wbridge trigger prompt --from-primary`)
+     - Binding (e.g., `<Ctrl><Alt>p`)
 
-## wbridge management rules
+4) Save
+   - Click “Save” to write bindings.
+   - Validation checks name/command/binding are present and summarizes conflicts.
 
-wbridge only manages entries whose keybinding path suffix starts with `wbridge-`, for example:
-```
-/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/wbridge-prompt/
-```
-- Editable in the UI: yes
-- Deletable from the UI: yes
-
-Foreign entries (anything not starting with `wbridge-`) are:
-- Editable in the UI: no (read‑only)
-- Deletable from the UI: no
-
-This ensures we do not unintentionally modify user‑created or third‑party keybindings.
-
----
-
-## Suffix generation and renaming
-
-When you Save:
-- The UI computes a deterministic suffix from the `name`:
-  - Normalize to lowercase, replace non `a-z0-9-` with `-`, trim `-`, and prefix with `wbridge-`.
-  - Example: Name `My Prompt` → suffix `wbridge-my-prompt/`.
-- If a row previously had a different suffix (rename), the old binding is removed before installing the new one.
-- Suffix collisions are avoided by appending `-2`, `-3`, … as needed.
-
-This scheme keeps keybinding paths stable and avoids conflicts.
+5) Test
+   - Use the new shortcut.
+   - Open the Status page to see logs when the shortcut runs.
 
 ---
 
-## Validation and conflicts
+## Examples
 
-On Save, each editable row must provide:
+Common wbridge commands for shortcuts
+- Show UI
+  ```
+  wbridge ui show
+  ```
+- Run by trigger (from Primary Selection)
+  ```
+  wbridge trigger prompt --from-primary
+  ```
+- Run by trigger (from Clipboard)
+  ```
+  wbridge trigger command --from-clipboard
+  ```
+
+Suffix generation (what the app does)
+- When saving, a stable dconf path suffix is derived from the Name:
+  - Lowercase, replace non `a-z0-9-` with `-`, trim `-`, prefix `wbridge-`
+  - Example: `My Prompt` → `/.../wbridge-my-prompt/`
+- Renames remove the old binding before installing the new one.
+- Collisions are resolved by appending `-2`, `-3`, …
+
+---
+
+## Validation & conflicts
+
+On Save, each editable row must have:
 - Name: non‑empty
 - Command: non‑empty
-- Binding: non‑empty (e.g., `<Ctrl><Alt>p`)
+- Binding: non‑empty accelerator string
 
-The page also scans for binding conflicts (same accelerator used by multiple entries). Conflicts are summarized as:
-```
-'<Ctrl><Alt>p' ×2
-```
-Resolve by changing one of the bindings.
-
----
-
-## PATH hint
-
-If the `wbridge` executable is not found in your `PATH`, you&#39;ll see a hint. Options:
-- Install user‑wide via `pipx install wbridge` or `pip install --user wbridge`
-- Or reference an absolute path in the `command` field of the shortcuts
+Conflict detection
+- The page summarizes duplicates like:
+  ```
+  '<Ctrl><Alt>p' ×2
+  ```
+- Resolve by changing one of the bindings.
 
 ---
 
-## Recommended defaults
+## Good practices
 
-From Settings you can install a recommended set of wbridge shortcuts, for example:
-- Prompt: `<Ctrl><Alt>p`
-- Command: `<Ctrl><Alt>m`
-- Show UI: `<Ctrl><Alt>u`
+- Keep Names descriptive; they become part of the stable keybinding path.
+- Prefer triggers in Command (aliases are human‑friendly and decouple from action names).
+- Start with defaults, then tailor bindings to your workflow.
+- If `wbridge` is not on PATH, use an absolute path in Command.
 
-These are installed under wbridge scope and can be edited later on this page.
+PATH hint
+- If GNOME can’t find `wbridge`:
+  - Install via pipx with `--system-site-packages`
+  - Ensure `~/.local/bin` is in PATH
+  - Or use an absolute path in Command
 
 ---
 
 ## Troubleshooting
 
-- Save failed: “name/command/binding must not be empty”
-  - Ensure all three fields are provided.
-- Shortcut didn&#39;t appear in GNOME Settings
-  - Press Reload in this page.
-  - Check `dconf` write permissions or try restarting GNOME Shell or your session if needed.
-- Binding not working
-  - Verify no global conflict: look for conflicts summary or check GNOME Keyboard shortcuts UI.
-- `wbridge` command not found
-  - Install via pipx/pip or provide an absolute path in the shortcut command field.
+Save failed: “name/command/binding must not be empty”
+- Provide all fields for each editable row.
+
+Shortcut didn’t appear or update
+- Click “Reload”.
+- If necessary, restart GNOME Shell/session.
+
+Binding not working
+- Check the conflicts summary or GNOME Keyboard shortcuts UI for collisions.
+- Try a different accelerator.
+
+`wbridge` command not found
+- Ensure PATH is correct (pipx installs into `~/.local/bin`).
+- Use an absolute path if needed.
+
+---
+
+## Glossary & links
+
+- Triggers: alias → action mapping (useful in Command)
+- Actions: reusable operations (HTTP/Shell)
+- Settings: install/remove recommended shortcuts; configure PATH hints
+- Status: watch logs while pressing a shortcut
+
+Related pages
+- Actions: `help/en/actions.md`
+- Triggers: `help/en/triggers.md`
+- Settings (install defaults): `help/en/settings.md`
+- Status (logs): `help/en/status.md`
