@@ -86,7 +86,3 @@ textview.log {
 .help-popover {
   padding: 8px;
 }
-
-.help-popover scrolledwindow {
-  min-width: 520px;
-}

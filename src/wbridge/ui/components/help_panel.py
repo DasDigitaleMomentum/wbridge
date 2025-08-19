@@ -50,7 +50,6 @@ def build_help_panel(topic: str, mode: str | None = None) -> Gtk.Widget:
         pass
     try:
         sc.set_min_content_height(160)
-        sc.set_min_content_width(520)
     except Exception:
         pass
     sc.set_child(content_label)

@@ -64,9 +64,11 @@ def build_page_header(title: str, subtitle: str | None, help_widget: Gtk.Widget 
                     win_w = root.get_width() if root and hasattr(root, "get_width") else 0
                     target = 600
                     if win_w and win_w > 0:
-                        # aim for ~65% of window width, min 520px, max (window - 48px)
-                        target = max(520, int(win_w * 0.65))
-                        target = min(target, max(520, win_w - 48))
+                        # aim for ~65% of window width; clamp to window width minus margin, never exceed
+                        margin = 32
+                        allowed = max(1, win_w - margin)
+                        preferred = max(280, int(win_w * 0.65))
+                        target = min(preferred, allowed)
                     # child structure: Popover -> Box(.help-popover) -> ScrolledWindow
                     box = help_widget.get_child()  # type: ignore[attr-defined]
                     sw = None
