@@ -1,0 +1,18 @@
+{
+  "actions": [
+    {
+      "name": "Obsidian: Append to Inbox.md",
+      "type": "http",
+      "method": "POST",
+      "url": "{config.endpoint.obsidian.base_url}/vault/Inbox.md",
+      "headers": {
+        "Authorization": "Bearer {config.secrets.obsidian_token}",
+        "Content-Type": "text/markdown"
+      },
+      "body_is_text": true
+    }
+  ],
+  "triggers": {
+    "obsidian.append": "Obsidian: Append to Inbox.md"
+  }
+}

@@ -4,7 +4,7 @@
       "name": "Witsy: prompt",
       "type": "http",
       "method": "POST",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}",
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}",
       "headers": { "Content-Type": "application/json" },
       "json": { "cmd": "prompt", "text": "{text}" }
     },
@@ -12,7 +12,7 @@
       "name": "Witsy: command",
       "type": "http",
       "method": "POST",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}",
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}",
       "headers": { "Content-Type": "application/json" },
       "json": { "cmd": "command", "text": "{text}" }
     },
@@ -20,43 +20,43 @@
       "name": "Witsy: chat",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=chat"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=chat"
     },
     {
       "name": "Witsy: scratchpad",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=scratchpad"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=scratchpad"
     },
     {
       "name": "Witsy: readaloud",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=readaloud"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=readaloud"
     },
     {
       "name": "Witsy: transcribe",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=transcribe"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=transcribe"
     },
     {
       "name": "Witsy: realtime",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=realtime"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=realtime"
     },
     {
       "name": "Witsy: studio",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=studio"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=studio"
     },
     {
       "name": "Witsy: forge",
       "type": "http",
       "method": "GET",
-      "url": "{config.integration.http_trigger_base_url}{config.integration.http_trigger_trigger_path}?cmd=forge"
+      "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}?cmd=forge"
     }
   ],
   "triggers": {

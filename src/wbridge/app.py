@@ -360,6 +360,11 @@ class BridgeApplication(Gtk.Application):
                 return {"ok": False, "error": f"action not found: {name}", "code": "NOT_FOUND"}
 
             sel_text, sel_type = self._resolve_source_text(src, text_override)
+            # V2: reload settings fresh on each action to reflect edits (endpoints/secrets/shortcuts)
+            try:
+                self._settings = load_settings()
+            except Exception:
+                pass
             try:
                 settings_map = self._settings.as_mapping() if self._settings else None  # type: ignore[union-attr]
             except Exception:

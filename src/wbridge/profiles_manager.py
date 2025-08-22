@@ -3,8 +3,8 @@
 Implements:
 - list_builtin_profiles() -> list[str]
 - show_profile(name: str) -> dict
-- install_profile(name: str, *, overwrite_actions: bool, patch_settings: bool,
-                  install_shortcuts: bool, dry_run: bool) -> dict (Report)
+- install_profile(name: str, *, overwrite_actions: bool, merge_endpoints: bool,
+                  merge_secrets: bool, merge_shortcuts: bool, dry_run: bool) -> dict (Report)
 
 Profile structure (as package resources):
   wbridge/profiles/<name>/
@@ -20,12 +20,11 @@ Merge/Backup rules per DESIGN.md (Abschnitt 25/27):
   - triggers: add new keys; collisions: default keep user; overwrite if overwrite_actions=True.
   - Backup: actions.json.bak-YYYYmmdd-HHMMSS (before write)
 - settings.patch.ini:
-  - Only allowed keys (whitelist) in [integration]: http_trigger_enabled, http_trigger_base_url,
-    http_trigger_trigger_path, http_trigger_health_path
-  - Default: do nothing; if patch_settings=True, patch these keys from profile file.
+  - Allowed sections: endpoint.*, secrets, gnome.shortcuts, optional gnome.manage_shortcuts
+  - Default: do nothing; if merge_* flags are set, merge the corresponding sections/keys into settings.ini.
   - Backup before write.
 - shortcuts.json:
-  - Only install if install_shortcuts=True. Report installed/skipped. No forced overwrite; GNOME handles conflicts.
+  - Only merge into settings.ini if merge_shortcuts=True. Report merged/skipped. No direct dconf write; GNOME will be synced by UI based on settings.
 
 All file writes are atomic (write temp + replace).
 """
@@ -260,17 +259,12 @@ def show_profile(name: str) -> Dict[str, Any]:
 @dataclass
 class InstallOptions:
     overwrite_actions: bool = False
-    patch_settings: bool = False
-    install_shortcuts: bool = False
+    merge_endpoints: bool = False
+    merge_secrets: bool = False
+    merge_shortcuts: bool = False
     dry_run: bool = False
 
 
-_ALLOWED_INTEGRATION_KEYS = {
-    "http_trigger_enabled",
-    "http_trigger_base_url",
-    "http_trigger_trigger_path",
-    "http_trigger_health_path",
-}
 
 
 def _merge_actions(user: dict, prof: dict, overwrite: bool) -> Dict[str, Any]:
@@ -406,8 +400,75 @@ def load_profile_shortcuts(name: str) -> List[dict]:
     return list(items)
 
 
-def install_profile(name: str, *, overwrite_actions: bool = False, patch_settings: bool = False,
-                    install_shortcuts: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+# ---------- V2 shortcut merging helpers (INI as SoT) ----------
+
+def _shortcut_alias_from_command(cmd: str) -> Optional[str]:
+    """
+    Try to derive a trigger alias from a shortcut command.
+    Supported patterns:
+      - "wbridge ui show"                  -> "ui_show"
+      - "wbridge trigger <alias> ..."      -> "<alias>"
+    Returns None if alias cannot be determined.
+    """
+    try:
+        import re
+        s = str(cmd or "").strip()
+        if not s:
+            return None
+        if s.startswith("wbridge ui show"):
+            return "ui_show"
+        m = re.search(r"\\bwbridge\\s+trigger\\s+([^\\s]+)", s)
+        if m:
+            return m.group(1)
+        return None
+    except Exception:
+        return None
+
+
+def _merge_shortcuts_section(sp: configparser.ConfigParser, mapping: Dict[str, str]) -> Dict[str, int]:
+    """
+    Merge alias->binding entries into settings.ini under [gnome.shortcuts].
+    Returns counts: {"installed": merged, "skipped": skipped}
+    """
+    merged = skipped = 0
+    try:
+        if not sp.has_section("gnome.shortcuts"):
+            sp.add_section("gnome.shortcuts")
+        for alias, binding in mapping.items():
+            try:
+                if binding:
+                    sp.set("gnome.shortcuts", alias, binding)
+                    merged += 1
+                else:
+                    skipped += 1
+            except Exception:
+                skipped += 1
+    except Exception:
+        pass
+    return {"installed": merged, "skipped": skipped}
+
+
+def _merge_shortcuts_from_items(sp: configparser.ConfigParser, items: List[dict]) -> Dict[str, int]:
+    """
+    Merge GNOME shortcuts defined as a list of dicts (profile shortcuts.json)
+    into settings.ini's [gnome.shortcuts] using derived trigger aliases.
+    """
+    mapping: Dict[str, str] = {}
+    for sc in items or []:
+        try:
+            cmd = str(sc.get("command") or "")
+            binding = str(sc.get("binding") or "")
+            alias = _shortcut_alias_from_command(cmd)
+            if alias and binding:
+                mapping[alias] = binding
+        except Exception:
+            continue
+    return _merge_shortcuts_section(sp, mapping)
+
+
+def install_profile(name: str, *, overwrite_actions: bool = False,
+                    merge_endpoints: bool = False, merge_secrets: bool = False,
+                    merge_shortcuts: bool = False, dry_run: bool = False) -> Dict[str, Any]:
     """
     Install a profile into the user's configuration per options.
     Returns a report dict as specified in DESIGN.md.
@@ -417,8 +478,8 @@ def install_profile(name: str, *, overwrite_actions: bool = False, patch_setting
         "profile": name,
         "actions": {"added": 0, "updated": 0, "skipped": 0, "backup": None},
         "triggers": {"added": 0, "updated": 0, "skipped": 0},
-        "settings": {"patched": [], "skipped": [], "backup": None},
-        "shortcuts": {"installed": 0, "skipped": 0},
+        "settings": {"merged": [], "skipped": [], "backup": None},
+        "shortcuts": {"merged": 0, "skipped": 0},
         "dry_run": bool(dry_run),
         "errors": [],
     }
@@ -468,61 +529,121 @@ def install_profile(name: str, *, overwrite_actions: bool = False, patch_setting
     except Exception as e:
         report["errors"].append(f"actions merge error: {e}")
 
-    # 2) settings.patch.ini (whitelist keys)
-    if patch_settings and prof_settings_cp:
+    # 2) settings.patch.ini (V2 merge: endpoint.*, secrets, gnome.shortcuts (if requested), optional gnome.manage_shortcuts)
+    if prof_settings_cp and (merge_endpoints or merge_secrets or (merge_shortcuts and prof_settings_cp.has_section("gnome.shortcuts"))):
         try:
+            # Read or create settings.ini
             if settings_path.exists():
                 sp = configparser.ConfigParser()
                 sp.read(settings_path)
             else:
                 sp = configparser.ConfigParser()
-            # Ensure [integration] exists
-            if not sp.has_section("integration"):
-                sp.add_section("integration")
 
-            patched_keys: List[str] = []
+            merged_keys: List[str] = []
             skipped_keys: List[str] = []
-            if prof_settings_cp.has_section("integration"):
-                for key, val in prof_settings_cp.items("integration"):
-                    if key in _ALLOWED_INTEGRATION_KEYS:
-                        try:
-                            # preserve exact textual value
-                            sp.set("integration", key, val)
-                            patched_keys.append(key)
-                        except Exception:
-                            skipped_keys.append(key)
-                    else:
-                        skipped_keys.append(key)
+
+            if prof_settings_cp and (merge_endpoints or merge_secrets or merge_shortcuts):
+                # Merge endpoint.*, secrets and optional gnome.manage_shortcuts
+                for sec in prof_settings_cp.sections():
+                    try:
+                        if sec.startswith("endpoint.") and merge_endpoints:
+                            if not sp.has_section(sec):
+                                sp.add_section(sec)
+                            for key, val in prof_settings_cp.items(sec):
+                                try:
+                                    sp.set(sec, key, val)
+                                    merged_keys.append(f"{sec}.{key}")
+                                except Exception:
+                                    skipped_keys.append(f"{sec}.{key}")
+                        elif sec == "secrets" and merge_secrets:
+                            if not sp.has_section("secrets"):
+                                sp.add_section("secrets")
+                            for key, val in prof_settings_cp.items("secrets"):
+                                try:
+                                    sp.set("secrets", key, val)
+                                    merged_keys.append(f"secrets.{key}")
+                                except Exception:
+                                    skipped_keys.append(f"secrets.{key}")
+                        elif sec == "gnome" and merge_shortcuts:
+                            # accept manage_shortcuts boolean from profile
+                            for key, val in prof_settings_cp.items("gnome"):
+                                if key == "manage_shortcuts":
+                                    try:
+                                        if not sp.has_section("gnome"):
+                                            sp.add_section("gnome")
+                                        sp.set("gnome", key, val)
+                                        merged_keys.append(f"gnome.{key}")
+                                    except Exception:
+                                        skipped_keys.append(f"gnome.{key}")
+                        else:
+                            # ignore others; [gnome.shortcuts] handled below if requested
+                            pass
+                    except Exception:
+                        continue
+
+            # Optionally merge [gnome.shortcuts] from profile settings.ini if install_shortcuts requested
+            if prof_settings_cp and merge_shortcuts and prof_settings_cp.has_section("gnome.shortcuts"):
+                src_map = dict(prof_settings_cp.items("gnome.shortcuts"))
+                res = _merge_shortcuts_section(sp, src_map)
+                # map to report counters
+                report["shortcuts"]["merged"] = report["shortcuts"].get("merged", 0) + int(res.get("installed", 0))
+                report["shortcuts"]["skipped"] = report["shortcuts"].get("skipped", 0) + int(res.get("skipped", 0))
 
             if not dry_run:
                 bak = _backup_file(settings_path)
                 if bak:
                     report["settings"]["backup"] = str(bak)
-                # Write INI
+                # atomic write
                 with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=settings_path.parent, prefix=settings_path.name + ".") as tf:
                     sp.write(tf)
                     tf.flush()
                     os.fsync(tf.fileno())
                     tmpname = tf.name
                 os.replace(tmpname, settings_path)
-            report["settings"]["patched"] = patched_keys
+
+            report["settings"]["merged"] = merged_keys
             report["settings"]["skipped"] = skipped_keys
         except Exception as e:
             report["errors"].append(f"settings patch error: {e}")
     else:
-        # list which keys would be patched in dry-run or if patch_settings not set
-        if prof_settings_cp and prof_settings_cp.has_section("integration"):
-            can_patch = [k for k, _ in prof_settings_cp.items("integration") if k in _ALLOWED_INTEGRATION_KEYS]
-            report["settings"]["skipped"] = can_patch
+        # list sections that could be merged (dry-run/info)
+        if prof_settings_cp:
+            sec_list: List[str] = []
+            for sec in prof_settings_cp.sections():
+                if sec.startswith("endpoint.") or sec in ("secrets", "gnome.shortcuts", "gnome"):
+                    sec_list.append(sec)
+            report["settings"]["skipped"] = sec_list
 
-    # 3) shortcuts install
-    if install_shortcuts and prof_shortcuts:
+    # 3) shortcuts merge into settings.ini (SoT)
+    if merge_shortcuts and prof_shortcuts:
         try:
-            res = _install_shortcuts(prof_shortcuts)
-            report["shortcuts"].update(res)
+            # Load or create settings.ini to merge shortcut bindings under [gnome.shortcuts]
+            if settings_path.exists():
+                sp = configparser.ConfigParser()
+                sp.read(settings_path)
+            else:
+                sp = configparser.ConfigParser()
+
+            res = _merge_shortcuts_from_items(sp, prof_shortcuts)
+
+            if not dry_run:
+                # Backup once if not already done
+                if not report["settings"].get("backup"):
+                    bak = _backup_file(settings_path)
+                    if bak:
+                        report["settings"]["backup"] = str(bak)
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=settings_path.parent, prefix=settings_path.name + ".") as tf:
+                    sp.write(tf)
+                    tf.flush()
+                    os.fsync(tf.fileno())
+                    tmpname = tf.name
+                os.replace(tmpname, settings_path)
+
+            # Report merged counts
+            report["shortcuts"]["merged"] = report["shortcuts"].get("merged", 0) + int(res.get("installed", 0))
+            report["shortcuts"]["skipped"] = report["shortcuts"].get("skipped", 0) + int(res.get("skipped", 0))
         except Exception as e:
-            # Gio not available or runtime error
-            report["errors"].append(f"shortcuts install error: {e}")
+            report["errors"].append(f"shortcuts merge error: {e}")
 
     report["ok"] = len(report["errors"]) == 0
     return report

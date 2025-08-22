@@ -78,6 +78,7 @@ def run_http_action(action: Dict[str, Any], ctx: ActionContext, timeout: float =
     json_body = action.get("json")
     data_body = action.get("data")
     params = action.get("params")
+    body_is_text = bool(action.get("body_is_text", False))
 
     # expand placeholders across fields
     url = _expand(url, ctx)
@@ -85,6 +86,8 @@ def run_http_action(action: Dict[str, Any], ctx: ActionContext, timeout: float =
     json_body = _expand_recursive(json_body, ctx)
     data_body = _expand_recursive(data_body, ctx)
     params = _expand_recursive(params, ctx)
+    if method != "GET" and body_is_text and json_body is None and data_body is None:
+        data_body = ctx.text
 
     try:
         if method == "GET":

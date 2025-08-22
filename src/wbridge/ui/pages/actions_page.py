@@ -568,17 +568,10 @@ class ActionsPage(Gtk.Box):
         return None
 
     def refresh_actions_list(self) -> None:
-        # Determine if HTTP trigger is enabled
-        enabled = True
+        # V2: Actions always usable; remove legacy integration gate
+        self._http_trigger_enabled = True
         try:
-            smap = self._get_settings_map()
-            enabled = str(smap.get("integration", {}).get("http_trigger_enabled", "false")).lower() == "true"
-        except Exception:
-            enabled = True
-        self._http_trigger_enabled = enabled
-
-        try:
-            self.actions_hint.set_text("" if enabled else _("HTTP trigger disabled – enable it in Settings"))
+            self.actions_hint.set_text("")
         except Exception:
             pass
 
@@ -604,7 +597,7 @@ class ActionsPage(Gtk.Box):
                     child = child.get_next_sibling()
                 if target_row is not None:
                     self.actions_list.select_row(target_row)  # type: ignore[arg-type]
-                self.btn_run.set_sensitive(bool(self._http_trigger_enabled and self._actions_selected_name))
+                self.btn_run.set_sensitive(bool(self._actions_selected_name))
             except Exception:
                 pass
             return False
@@ -635,7 +628,7 @@ class ActionsPage(Gtk.Box):
         buf = self._actions_json_tv.get_buffer()
         buf.set_text(pretty, -1)
         try:
-            self.btn_run.set_sensitive(bool(self._http_trigger_enabled))
+            self.btn_run.set_sensitive(True)
         except Exception:
             pass
         try:

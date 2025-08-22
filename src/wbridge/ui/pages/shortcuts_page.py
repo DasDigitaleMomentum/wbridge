@@ -1,27 +1,28 @@
-"""Shortcuts page for wbridge (extracted from gui_window.py).
+"""Shortcuts page (V2): Audit and sync GNOME shortcuts vs settings.ini.
 
 Provides:
-- Show wbridge-managed GNOME custom keybindings (optionally all, read-only)
-- Add new managed entries, Save, Reload, Delete
-- Conflict hint for duplicate bindings
-- PATH hint if 'wbridge' binary is not resolvable
+- Audit table: Alias | INI binding (editable) | Installed binding (read-only)
+- Controls: Add row, Save (INI), Apply now (sync GNOME), Remove all (GNOME), Reload
+- Conflicts summary
 - Help panel
 
-This page reads/writes GNOME keybindings via Gio.Settings and helpers in gnome_shortcuts.
+This page compares [gnome.shortcuts] from settings.ini with currently installed
+GNOME custom keybindings (wbridge-* scope) and lets you edit/save the INI mapping
+and synchronize it deterministically to GNOME.
 """
 
 from __future__ import annotations
 
 from typing import Optional, List, Dict, Any
 
-import shutil
+import re
 import gettext
 
 import gi
 gi.require_version("Gtk", "4.0")
-gi.require_version("Gio", "2.0")
-from gi.repository import Gtk, Gio  # type: ignore
+from gi.repository import Gtk, GLib  # type: ignore
 
+from ...config import load_settings, get_shortcuts_map, set_shortcuts_map  # type: ignore
 from ... import gnome_shortcuts  # type: ignore
 from ..components.help_panel import build_help_panel
 from ..components.page_header import build_page_header
@@ -36,8 +37,29 @@ except Exception:
     _ = lambda s: s
 
 
+def _alias_from_command(cmd: str) -> Optional[str]:
+    """
+    Derive a trigger alias from a GNOME shortcut command.
+      - 'wbridge ui show'                 -> 'ui_show'
+      - 'wbridge trigger <alias> [..]'    -> '<alias>'
+    Returns None if it cannot be determined.
+    """
+    try:
+        s = str(cmd or "").strip()
+        if not s:
+            return None
+        if s.startswith("wbridge ui show"):
+            return "ui_show"
+        m = re.search(r"\bwbridge\s+trigger\s+([^\s]+)", s)
+        if m:
+            return m.group(1)
+        return None
+    except Exception:
+        return None
+
+
 class ShortcutsPage(Gtk.Box):
-    """Shortcuts page container."""
+    """Shortcuts audit/sync page for V2."""
 
     def __init__(self, main_window: Gtk.ApplicationWindow):
         """Initialize the page with a reference to the MainWindow."""
@@ -54,7 +76,7 @@ class ShortcutsPage(Gtk.Box):
         self.set_margin_top(16)
         self.set_margin_bottom(16)
 
-        # Scrollbarer Inhaltscontainer (CTA bleibt unten fix)
+        # Scrollable content container (CTA bar stays fixed at bottom)
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         try:
             content_box.set_hexpand(True)
@@ -64,33 +86,32 @@ class ShortcutsPage(Gtk.Box):
         self.append(content_box)
 
         _help = build_help_panel("shortcuts")
-        header = build_page_header(_("Shortcuts"), None, _help)
+        header = build_page_header(_("Shortcuts"), _("Audit and sync GNOME shortcuts vs settings.ini"), _help)
         content_box.append(header)
         content_box.append(_help)
 
-
-
-        # Controls: show-all (read-only), Add, Save, Reload
+        # Controls: Add, Save (INI), Apply now, Remove all, Reload
         ctrl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl_show = Gtk.Label(label=_("Show all custom (read-only):"))
-        lbl_show.set_xalign(0.0)
-        ctrl.append(lbl_show)
 
-        self.shortcuts_show_all = Gtk.Switch()
-        self.shortcuts_show_all.set_active(False)
+        btn_add = Gtk.Button(label=_("Add row"))
+        btn_add.connect("clicked", self._on_add_clicked)
+        ctrl.append(btn_add)
 
-        def _on_show_all(_sw, _ps=None):
-            try:
-                self.reload()
-            except Exception:
-                pass
-            return False
+        btn_save = Gtk.Button(label=_("Save (INI)"))
+        btn_save.connect("clicked", self._on_save_clicked)
+        ctrl.append(btn_save)
 
-        self.shortcuts_show_all.connect("state-set", _on_show_all)
-        ctrl.append(self.shortcuts_show_all)
+        btn_apply = Gtk.Button(label=_("Apply now (GNOME)"))
+        btn_apply.connect("clicked", self._on_apply_now_clicked)
+        ctrl.append(btn_apply)
 
+        btn_remove_all = Gtk.Button(label=_("Remove all (GNOME)"))
+        btn_remove_all.connect("clicked", self._on_remove_all_clicked)
+        ctrl.append(btn_remove_all)
 
-
+        btn_reload = Gtk.Button(label=_("Reload"))
+        btn_reload.connect("clicked", self._on_reload_clicked)
+        ctrl.append(btn_reload)
 
         content_box.append(ctrl)
 
@@ -99,12 +120,12 @@ class ShortcutsPage(Gtk.Box):
         self.shortcuts_conflicts_label.set_xalign(0.0)
         content_box.append(self.shortcuts_conflicts_label)
 
-        # List
+        # List (Audit table)
         self.shortcuts_list = Gtk.ListBox()
         self.shortcuts_list.set_selection_mode(Gtk.SelectionMode.NONE)
         sc = Gtk.ScrolledWindow()
         sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sc.set_min_content_height(300)
+        sc.set_min_content_height(320)
         try:
             sc.set_hexpand(True)
             sc.set_vexpand(True)
@@ -119,14 +140,14 @@ class ShortcutsPage(Gtk.Box):
         self.shortcuts_result.set_xalign(0.0)
         content_box.append(self.shortcuts_result)
 
-        # Bottom CTA bar (Add/Save/Reload)
-        btn_add = Gtk.Button(label=_("Add"))
-        btn_add.connect("clicked", self._on_add_clicked)
-        btn_save = Gtk.Button(label=_("Save"))
-        btn_save.connect("clicked", self._on_save_clicked)
-        btn_reload = Gtk.Button(label=_("Reload"))
-        btn_reload.connect("clicked", self._on_reload_clicked)
-        self.append(build_cta_bar(btn_add, btn_save, btn_reload))
+        # Bottom CTA bar (Save/Apply/Reload duplicates kept for quick access)
+        btn_save2 = Gtk.Button(label=_("Save (INI)"))
+        btn_save2.connect("clicked", self._on_save_clicked)
+        btn_apply2 = Gtk.Button(label=_("Apply now (GNOME)"))
+        btn_apply2.connect("clicked", self._on_apply_now_clicked)
+        btn_reload2 = Gtk.Button(label=_("Reload"))
+        btn_reload2.connect("clicked", self._on_reload_clicked)
+        self.append(build_cta_bar(btn_save2, btn_apply2, btn_reload2))
 
         # Initial load
         try:
@@ -134,245 +155,219 @@ class ShortcutsPage(Gtk.Box):
         except Exception:
             pass
 
-
     # --- Public API ---------------------------------------------------------
 
     def reload(self) -> None:
-        """Rebuild list and conflict hints."""
-        include_foreign = bool(self.shortcuts_show_all.get_active()) if hasattr(self, "shortcuts_show_all") else False
-        items = self._read_items(include_foreign=include_foreign)
+        """Rebuild audit table from INI mapping and installed GNOME shortcuts."""
+        ini_map = self._load_ini_mapping()
+        installed_map = self._load_installed_mapping()
 
-        # Clear
-        child = self.shortcuts_list.get_first_child()
-        while child is not None:
-            self.shortcuts_list.remove(child)
-            child = self.shortcuts_list.get_first_child()
+        # Union of aliases: from INI and installed
+        aliases: List[str] = sorted(set(ini_map.keys()) | set(installed_map.keys()))
 
-        # Build rows
-        for it in items:
-            self.shortcuts_list.append(self._build_row(it))
+        # Clear listbox
+        self._clear_listbox(self.shortcuts_list)
 
-        # Conflicts
-        conflicts: Dict[str, int] = {}
-        for it in items:
-            b = str(it.get("binding") or "")
-            if not b:
-                continue
-            conflicts[b] = conflicts.get(b, 0) + 1
-        msgs: List[str] = []
-        for k, cnt in conflicts.items():
-            if cnt > 1:
-                msgs.append(f"'{k}' ×{cnt}")
-        self.shortcuts_conflicts_label.set_text((_('Conflicts: ') + ", ".join(msgs)) if msgs else "")
+        # Header row
+        hdr = Gtk.Grid(column_spacing=8, row_spacing=4)
+        def _hdr_label(text: str) -> Gtk.Label:
+            l = Gtk.Label(label=text)
+            l.set_xalign(0.0)
+            try:
+                l.get_style_context().add_class("dim-label")
+            except Exception:
+                pass
+            return l
+        hdr.attach(_hdr_label(_("Alias")), 0, 0, 1, 1)
+        hdr.attach(_hdr_label(_("INI Binding (editable)")), 1, 0, 1, 1)
+        hdr.attach(_hdr_label(_("Installed Binding (read-only)")), 2, 0, 1, 1)
+        row_hdr = Gtk.ListBoxRow()
+        row_hdr.set_sensitive(False)
+        row_hdr.set_child(hdr)
+        self.shortcuts_list.append(row_hdr)
+
+        # Rows
+        for a in aliases:
+            ini_bind = ini_map.get(a, "")
+            inst_bind = installed_map.get(a, "")
+            self.shortcuts_list.append(self._build_row(a, ini_bind, inst_bind))
+
+        # Conflicts summary (installed)
+        self._update_conflicts(installed_map)
 
     # --- Button handlers -----------------------------------------------------
 
     def _on_reload_clicked(self, _btn: Gtk.Button) -> None:
         try:
             self.reload()
-            self._notify(_("Reloaded shortcuts."))
+            self._notify(_("Reloaded shortcuts audit."))
         except Exception as e:
             self._notify(f"Reload failed: {e!r}")
 
     def _on_add_clicked(self, _btn: Gtk.Button) -> None:
         try:
-            # Create empty editable row (wbridge-managed, not yet installed)
-            item = {
-                "full_path": None,
-                "suffix": None,
-                "is_managed": True,
-                "name": "New Shortcut",
-                "command": "",
-                "binding": ""
-            }
-            row = self._build_row(item)
+            # Add an empty editable row (alias + ini binding), installed binding stays empty
+            row = self._build_row("", "", "")
             self.shortcuts_list.append(row)
+            # Focus alias field
             try:
-                getattr(row, "_wbridge_name_entry").grab_focus()  # type: ignore[attr-defined]
+                getattr(row, "_wbridge_alias_entry").grab_focus()  # type: ignore[attr-defined]
             except Exception:
                 pass
-            self._notify(_("New shortcut row added (not yet saved)."))
+            self._notify(_("New row added (INI only)."))
         except Exception as e:
             self._notify(f"Add failed: {e!r}")
 
     def _on_row_delete_clicked(self, _btn: Gtk.Button, row: Gtk.ListBoxRow) -> None:
         try:
-            is_managed = bool(getattr(row, "_wbridge_is_managed", False))
-            if not is_managed:
-                self._notify(_("Delete not allowed for non-wbridge entries."))
-                return
-            suffix = getattr(row, "_wbridge_suffix", None)
-            if suffix:
-                try:
-                    gnome_shortcuts.remove_binding(suffix)
-                except Exception as e:
-                    self._notify(f"Remove failed: {e!r}")
             self.shortcuts_list.remove(row)
-            self.reload()
-            self._notify(_("Shortcut removed."))
+            self._notify(_("Row removed (remember to Save)."))
         except Exception as e:
             self._notify(f"Delete failed: {e!r}")
 
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
         try:
-            # Existing suffixes to avoid collisions
-            current = self._read_items(include_foreign=True)
-            existing_suffixes: set[str] = {str(it.get("suffix")) for it in current if isinstance(it.get("suffix"), str)}
-            changed = 0
-
-            child = self.shortcuts_list.get_first_child()
-            while child is not None:
-                if isinstance(child, Gtk.ListBoxRow):
-                    is_managed = bool(getattr(child, "_wbridge_is_managed", False))
-                    if is_managed:
-                        name_e = getattr(child, "_wbridge_name_entry", None)
-                        cmd_e = getattr(child, "_wbridge_cmd_entry", None)
-                        bind_e = getattr(child, "_wbridge_bind_entry", None)
-                        old_suffix = getattr(child, "_wbridge_suffix", None)
-
-                        name = (name_e.get_text() if name_e else "").strip()
-                        cmd = (cmd_e.get_text() if cmd_e else "").strip()
-                        bind = (bind_e.get_text() if bind_e else "").strip()
-
-                        if not name:
-                            self._notify(_("Validation failed: name must not be empty"))
-                            return
-                        if not cmd:
-                            self._notify(_("Validation failed: command must not be empty"))
-                            return
-                        if not bind:
-                            self._notify(_("Validation failed: binding must not be empty"))
-                            return
-
-                        desired_suffix = self._compute_suffix(name, existing_suffixes, prefer=old_suffix)
-                        if old_suffix and desired_suffix != old_suffix:
-                            try:
-                                gnome_shortcuts.remove_binding(old_suffix)
-                            except Exception:
-                                pass
-                            existing_suffixes.discard(old_suffix)
-
-                        gnome_shortcuts.install_binding(desired_suffix, name, cmd, bind)
-                        setattr(child, "_wbridge_suffix", desired_suffix)
-                        existing_suffixes.add(desired_suffix)
-                        changed += 1
-                child = child.get_next_sibling()
-
+            mapping = self._collect_ini_mapping()
+            set_shortcuts_map(mapping)
+            self._notify(_("INI saved (aliases={n}).").format(n=len(mapping)))
+            # After saving, refresh audit to reflect current INI
             self.reload()
-            self._notify(f"Saved shortcuts: {changed}")
         except Exception as e:
-            self._notify(f"Save failed: {e!r}")
+            self._notify(_("Save failed: {err}").format(err=repr(e)))
+
+    def _on_apply_now_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            smap = load_settings().as_mapping()
+            res = gnome_shortcuts.sync_from_ini(smap, auto_remove=True)
+            self._notify(_("Applied: installed={i} updated={u} removed={r} skipped={s}").format(
+                i=res.get("installed", 0),
+                u=res.get("updated", 0),
+                r=res.get("removed", 0),
+                s=res.get("skipped", 0),
+            ))
+            # After applying, refresh audit to show current 'Installed Binding'
+            self.reload()
+        except Exception as e:
+            self._notify(_("Apply failed: {err}").format(err=repr(e)))
+
+    def _on_remove_all_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            rep = gnome_shortcuts.remove_all_wbridge_shortcuts()
+            self._notify(_("All wbridge shortcuts removed: removed={removed}, kept={kept}.").format(
+                removed=rep.get("removed", 0), kept=rep.get("kept", 0)
+            ))
+            self.reload()
+        except Exception as e:
+            self._notify(_("Remove failed: {err}").format(err=repr(e)))
 
     # --- Internals -----------------------------------------------------------
 
-    def _compute_suffix(self, name: str, existing_suffixes: set[str], prefer: Optional[str] = None) -> str:
-        import re
-        norm = re.sub(r"[^a-z0-9\\-]+", "-", name.lower()).strip("-")
-        base = f"wbridge-{norm or 'unnamed'}"
-        suffix = base + "/"
-        if prefer and prefer.startswith("wbridge-") and prefer.endswith("/") and prefer not in existing_suffixes:
-            return prefer
-        if suffix not in existing_suffixes:
-            return suffix
-        i = 2
-        while True:
-            cand = f"{base}-{i}/"
-            if cand not in existing_suffixes:
-                return cand
-            i += 1
-
-    def _read_items(self, include_foreign: bool) -> list[dict]:
-        items: list[dict] = []
+    def _load_ini_mapping(self) -> Dict[str, str]:
         try:
-            base = Gio.Settings.new(gnome_shortcuts.BASE_SCHEMA)  # type: ignore
-            paths = list(base.get_strv(gnome_shortcuts.BASE_KEY))  # type: ignore
+            return get_shortcuts_map(load_settings())
         except Exception:
-            return items
+            return {}
 
-        for p in paths:
-            try:
-                full_path = str(p)
-                if not full_path.startswith(gnome_shortcuts.PATH_PREFIX):
-                    continue
-                suffix = full_path[len(gnome_shortcuts.PATH_PREFIX):]
-                is_managed = suffix.startswith("wbridge-")
-                if not include_foreign and not is_managed:
-                    continue
-                custom = Gio.Settings.new_with_path(gnome_shortcuts.CUSTOM_SCHEMA, full_path)  # type: ignore
-                name = str(custom.get_string("name") or "")
-                cmd = str(custom.get_string("command") or "")
-                bind = str(custom.get_string("binding") or "")
-                items.append({
-                    "full_path": full_path,
-                    "suffix": suffix,
-                    "is_managed": is_managed,
-                    "name": name,
-                    "command": cmd,
-                    "binding": bind
-                })
-            except Exception:
-                continue
-        return items
+    def _load_installed_mapping(self) -> Dict[str, str]:
+        """
+        Build alias -> installed binding map by inspecting current GNOME shortcuts
+        within wbridge scope via gnome_shortcuts.list_installed().
+        """
+        out: Dict[str, str] = {}
+        try:
+            items = gnome_shortcuts.list_installed() or []
+            for it in items:
+                alias = _alias_from_command(str(it.get("command") or ""))
+                if alias:
+                    bind = str(it.get("binding") or "")
+                    out[alias] = bind
+        except Exception:
+            pass
+        return out
 
-    def _build_row(self, item: dict) -> Gtk.ListBoxRow:
-        is_managed = bool(item.get("is_managed"))
-        name = str(item.get("name") or "")
-        cmd = str(item.get("command") or "")
-        bind = str(item.get("binding") or "")
-        suffix = item.get("suffix") or None
-
+    def _build_row(self, alias: str, ini_binding: str, installed_binding: str) -> Gtk.ListBoxRow:
         grid = Gtk.Grid(column_spacing=8, row_spacing=4)
-        c = 0
 
-        lbl_name = Gtk.Label(label=_("Name:"))
-        lbl_name.set_xalign(1.0)
-        grid.attach(lbl_name, c, 0, 1, 1); c += 1
-        name_e = Gtk.Entry()
-        name_e.set_text(name)
-        name_e.set_hexpand(True)
-        name_e.set_sensitive(is_managed)
-        grid.attach(name_e, c, 0, 1, 1); c += 1
+        # Alias (editable)
+        lbl_alias = Gtk.Label(label=_("Alias:")); lbl_alias.set_xalign(1.0)
+        e_alias = Gtk.Entry(); e_alias.set_text(str(alias or "")); e_alias.set_width_chars(16)
 
-        lbl_cmd = Gtk.Label(label=_("Command:"))
-        lbl_cmd.set_xalign(1.0)
-        grid.attach(lbl_cmd, 0, 1, 1, 1)
-        cmd_e = Gtk.Entry()
-        cmd_e.set_text(cmd)
-        cmd_e.set_hexpand(True)
-        cmd_e.set_sensitive(is_managed)
-        grid.attach(cmd_e, 1, 1, 1, 1)
+        # INI binding (editable)
+        lbl_ini = Gtk.Label(label=_("INI:")); lbl_ini.set_xalign(1.0)
+        e_ini = Gtk.Entry(); e_ini.set_text(str(ini_binding or "")); e_ini.set_hexpand(True)
 
-        lbl_bind = Gtk.Label(label=_("Binding:"))
-        lbl_bind.set_xalign(1.0)
-        grid.attach(lbl_bind, 0, 2, 1, 1)
-        bind_e = Gtk.Entry()
-        bind_e.set_text(bind)
-        bind_e.set_hexpand(True)
-        bind_e.set_sensitive(is_managed)
-        grid.attach(bind_e, 1, 2, 1, 1)
+        # Installed binding (read-only)
+        lbl_inst = Gtk.Label(label=_("Installed:")); lbl_inst.set_xalign(1.0)
+        v_inst = Gtk.Label(label=str(installed_binding or "")); v_inst.set_xalign(0.0)
 
+        # Buttons
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        if is_managed:
-            del_btn = Gtk.Button(label=_("Delete"))
-            btn_box.append(del_btn)
+        del_btn = Gtk.Button(label=_("Delete"))
+        btn_box.append(del_btn)
+
+        # Layout
+        grid.attach(lbl_alias, 0, 0, 1, 1)
+        grid.attach(e_alias, 1, 0, 1, 1)
+        grid.attach(lbl_ini, 0, 1, 1, 1)
+        grid.attach(e_ini, 1, 1, 1, 1)
+        grid.attach(lbl_inst, 0, 2, 1, 1)
+        grid.attach(v_inst, 1, 2, 1, 1)
         grid.attach(btn_box, 1, 3, 1, 1)
 
         row = Gtk.ListBoxRow()
         row.set_child(grid)
 
-        # Row metadata
-        row._wbridge_is_managed = is_managed  # type: ignore[attr-defined]
-        row._wbridge_suffix = suffix  # type: ignore[attr-defined]
-        row._wbridge_name_entry = name_e  # type: ignore[attr-defined]
-        row._wbridge_cmd_entry = cmd_e  # type: ignore[attr-defined]
-        row._wbridge_bind_entry = bind_e  # type: ignore[attr-defined]
+        # Attach metadata for later collection
+        row._wbridge_alias_entry = e_alias  # type: ignore[attr-defined]
+        row._wbridge_ini_entry = e_ini      # type: ignore[attr-defined]
+        row._wbridge_inst_label = v_inst    # type: ignore[attr-defined]
 
-        if is_managed:
-            def _on_del(_b):
-                self._on_row_delete_clicked(_b, row)
-            del_btn.connect("clicked", _on_del)  # type: ignore[name-defined]
+        def _on_del(_b):
+            self._on_row_delete_clicked(_b, row)
+        del_btn.connect("clicked", _on_del)  # type: ignore[name-defined]
 
         return row
+
+    def _collect_ini_mapping(self) -> Dict[str, str]:
+        """
+        Read table rows and build an alias -> binding mapping for INI.
+        Rows missing alias or binding are ignored.
+        """
+        mapping: Dict[str, str] = {}
+        child = self.shortcuts_list.get_first_child()
+        # Skip header row (first)
+        if child is not None:
+            child = child.get_next_sibling()
+        while child is not None:
+            if isinstance(child, Gtk.ListBoxRow):
+                e_alias = getattr(child, "_wbridge_alias_entry", None)
+                e_ini = getattr(child, "_wbridge_ini_entry", None)
+                alias = (e_alias.get_text() if e_alias else "").strip()
+                bind = (e_ini.get_text() if e_ini else "").strip()
+                if alias and bind:
+                    mapping[alias] = bind
+            child = child.get_next_sibling()
+        return mapping
+
+    def _update_conflicts(self, installed_map: Dict[str, str]) -> None:
+        # Summarize duplicates within installed bindings (read-only audit)
+        counts: Dict[str, int] = {}
+        for b in (installed_map or {}).values():
+            b = str(b or "")
+            if not b:
+                continue
+            counts[b] = counts.get(b, 0) + 1
+        msgs: List[str] = []
+        for k, cnt in counts.items():
+            if cnt > 1:
+                msgs.append(f"'{k}' ×{cnt}")
+        self.shortcuts_conflicts_label.set_text((_('Conflicts: ') + ", ".join(msgs)) if msgs else "")
+
+    def _clear_listbox(self, lb: Gtk.ListBox) -> None:
+        child = lb.get_first_child()
+        while child is not None:
+            lb.remove(child)
+            child = lb.get_first_child()
 
     def _notify(self, text: str) -> None:
         try:

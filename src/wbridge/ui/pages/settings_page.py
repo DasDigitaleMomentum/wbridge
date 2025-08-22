@@ -1,11 +1,10 @@
-"""Settings page for wbridge (extracted from gui_window.py).
+"""Settings page for wbridge (V2 configuration model).
 
 Provides:
-- Integration status (read-only labels)
-- Inline edit for HTTP trigger settings (enable/base/path)
-- Reload/Discard/Save and Health check
-- Profile management: show/install with options
-- Convenience buttons: Install/Remove GNOME shortcuts, Enable/Disable autostart
+- Endpoints editor: list/add/edit/delete HTTP endpoints stored in settings.ini ([endpoint.<id>])
+- Shortcuts editor (Config): edit [gnome.shortcuts] mapping with Auto-apply toggle, Apply now, Remove all
+- Profile management: show/install with options (merge_* flags)
+- Convenience buttons: Enable/Disable autostart
 - Help panel
 
 On changes it reloads settings into the Gtk.Application and asks other pages
@@ -14,7 +13,7 @@ On changes it reloads settings into the Gtk.Application and asks other pages
 
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import gettext
 
@@ -23,13 +22,21 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, GLib  # type: ignore
 
 from ...platform import socket_path, xdg_state_dir  # type: ignore
-from ...config import load_settings, set_integration_settings  # type: ignore
+from ...config import (  # type: ignore
+    load_settings,
+    list_endpoints,
+    upsert_endpoint,
+    delete_endpoint,
+    get_shortcuts_map,
+    set_shortcuts_map,
+    set_manage_shortcuts,
+    get_secrets_map,
+    set_secrets_map,
+)
 from ...profiles_manager import (  # type: ignore
     list_builtin_profiles,
     show_profile as pm_show_profile,
     install_profile as pm_install_profile,
-    load_profile_shortcuts,
-    remove_profile_shortcuts,
 )
 from ..components.help_panel import build_help_panel
 from ..components.page_header import build_page_header
@@ -45,7 +52,7 @@ except Exception:
 
 
 class SettingsPage(Gtk.Box):
-    """Settings page container with inline edit and profile helpers."""
+    """Settings page container with Endpoints/Shortcuts editors and profile helpers."""
 
     def __init__(self, main_window: Gtk.ApplicationWindow):
         """Initialize the page with a reference to the MainWindow."""
@@ -61,8 +68,6 @@ class SettingsPage(Gtk.Box):
         header = build_page_header(_("Settings"), None, _help)
         self.append(header)
         self.append(_help)
-
-
 
         # Basic info grid
         info_grid = Gtk.Grid(column_spacing=12, row_spacing=6)
@@ -86,103 +91,127 @@ class SettingsPage(Gtk.Box):
 
         self.append(info_grid)
 
-        # Integration status (read-only)
-        integ_hdr = Gtk.Label(label=_("Integration status"))
-        integ_hdr.set_xalign(0.0)
-        self.append(integ_hdr)
+        # ------- Endpoints editor -------
+        ep_hdr = Gtk.Label(label=_("Endpoints"))
+        ep_hdr.set_xalign(0.0)
+        self.append(ep_hdr)
 
-        integ_grid = Gtk.Grid(column_spacing=12, row_spacing=6)
-        lbl_enabled_k = Gtk.Label(label=_("http_trigger_enabled:"))
-        lbl_enabled_k.set_xalign(0.0)
-        self.integ_enabled_v = Gtk.Label(label="")
-        self.integ_enabled_v.set_xalign(0.0)
-        integ_grid.attach(lbl_enabled_k, 0, 0, 1, 1)
-        integ_grid.attach(self.integ_enabled_v, 1, 0, 1, 1)
+        ep_sc = Gtk.ScrolledWindow()
+        ep_sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        ep_sc.set_min_content_height(220)
+        self.endpoints_list = Gtk.ListBox()
+        self.endpoints_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        ep_sc.set_child(self.endpoints_list)
+        self.append(ep_sc)
 
-        lbl_base_k = Gtk.Label(label=_("Base URL:"))
-        lbl_base_k.set_xalign(0.0)
-        self.integ_base_v = Gtk.Label(label="")
-        self.integ_base_v.set_xalign(0.0)
-        integ_grid.attach(lbl_base_k, 0, 1, 1, 1)
-        integ_grid.attach(self.integ_base_v, 1, 1, 1, 1)
+        # Add/Edit row
+        ep_add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.ep_add_id_entry = Gtk.Entry()
+        self.ep_add_id_entry.set_placeholder_text(_("id (slug)"))
+        self.ep_add_id_entry.set_width_chars(12)
 
-        lbl_path_k = Gtk.Label(label=_("Trigger Path:"))
-        lbl_path_k.set_xalign(0.0)
-        self.integ_path_v = Gtk.Label(label="")
-        self.integ_path_v.set_xalign(0.0)
-        integ_grid.attach(lbl_path_k, 0, 2, 1, 1)
-        integ_grid.attach(self.integ_path_v, 1, 2, 1, 1)
+        self.ep_add_base_entry = Gtk.Entry()
+        self.ep_add_base_entry.set_hexpand(True)
+        self.ep_add_base_entry.set_placeholder_text(_("base_url (http/https)"))
 
-        self.append(integ_grid)
-        self.refresh_status()
+        self.ep_add_health_entry = Gtk.Entry()
+        self.ep_add_health_entry.set_placeholder_text(_("/health"))
 
-        # Integration edit
-        edit_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        edit_box.set_margin_top(6)
+        self.ep_add_trigger_entry = Gtk.Entry()
+        self.ep_add_trigger_entry.set_placeholder_text(_("/trigger"))
 
-        row_sw = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl_sw = Gtk.Label(label="Enable HTTP trigger:")
-        lbl_sw.set_xalign(0.0)
-        row_sw.append(lbl_sw)
-        self.integ_enabled_switch = Gtk.Switch()
-        try:
-            self.integ_enabled_switch.set_tooltip_text("Enable or disable the HTTP trigger integration backend.")
-        except Exception:
-            pass
-        row_sw.append(self.integ_enabled_switch)
-        edit_box.append(row_sw)
+        self.ep_add_btn = Gtk.Button(label=_("Add Endpoint"))
+        self.ep_add_btn.connect("clicked", self._on_endpoint_add_or_save_clicked)
 
-        row_base = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl_base = Gtk.Label(label="Base URL (http/https):")
-        lbl_base.set_xalign(0.0)
-        self.integ_base_entry = Gtk.Entry()
-        self.integ_base_entry.set_hexpand(True)
-        try:
-            self.integ_base_entry.set_tooltip_text("Base URL of the HTTP trigger service (e.g., http://localhost:8808)")
-        except Exception:
-            pass
-        row_base.append(lbl_base); row_base.append(self.integ_base_entry)
-        edit_box.append(row_base)
+        for w in [
+            Gtk.Label(label=_("ID:")), self.ep_add_id_entry,
+            Gtk.Label(label=_("Base URL:")), self.ep_add_base_entry,
+            Gtk.Label(label=_("Health:")), self.ep_add_health_entry,
+            Gtk.Label(label=_("Trigger:")), self.ep_add_trigger_entry,
+            self.ep_add_btn
+        ]:
+            ep_add_box.append(w)
+        self.append(ep_add_box)
 
-        row_path = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        lbl_path = Gtk.Label(label="Trigger Path (/trigger):")
-        lbl_path.set_xalign(0.0)
-        self.integ_path_entry = Gtk.Entry()
-        self.integ_path_entry.set_hexpand(True)
-        try:
-            self.integ_path_entry.set_tooltip_text("Trigger path (e.g., /trigger). Used with the Base URL to form the full endpoint.")
-        except Exception:
-            pass
-        row_path.append(lbl_path); row_path.append(self.integ_path_entry)
-        edit_box.append(row_path)
+        self._editing_endpoint_id: Optional[str] = None
+        self.endpoints_result = Gtk.Label(label="")
+        self.endpoints_result.set_xalign(0.0)
+        self.append(self.endpoints_result)
 
-        row_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_save = Gtk.Button(label=_("Save"))
-        btn_save.connect("clicked", self._on_save_integration_clicked)
-        row_btns.append(btn_save)
+        # ------- Secrets editor -------
+        sec_hdr = Gtk.Label(label=_("Secrets"))
+        sec_hdr.set_xalign(0.0)
+        self.append(sec_hdr)
 
-        btn_discard = Gtk.Button(label=_("Discard"))
-        btn_discard.connect("clicked", self._on_discard_integration_clicked)
-        row_btns.append(btn_discard)
+        sec_scrolled = Gtk.ScrolledWindow()
+        sec_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sec_scrolled.set_min_content_height(180)
+        self.secrets_list = Gtk.ListBox()
+        self.secrets_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        sec_scrolled.set_child(self.secrets_list)
+        self.append(sec_scrolled)
 
-        btn_reload = Gtk.Button(label=_("Reload Settings"))
-        btn_reload.connect("clicked", self._on_reload_settings_clicked)
-        row_btns.append(btn_reload)
+        sec_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_sec_add = Gtk.Button(label=_("Add row"))
+        btn_sec_add.connect("clicked", self._on_secrets_add_row_clicked)
+        btn_sec_save = Gtk.Button(label=_("Save (INI)"))
+        btn_sec_save.connect("clicked", self._on_secrets_save_clicked)
+        btn_sec_revert = Gtk.Button(label=_("Revert"))
+        btn_sec_revert.connect("clicked", self._on_secrets_revert_clicked)
+        for b in [btn_sec_add, btn_sec_save, btn_sec_revert]:
+            sec_btns.append(b)
+        self.append(sec_btns)
 
-        btn_health = Gtk.Button(label=_("Health check"))
-        btn_health.connect("clicked", self._on_health_check_clicked)
-        row_btns.append(btn_health)
+        self.secrets_result = Gtk.Label(label="")
+        self.secrets_result.set_wrap(True)
+        self.secrets_result.set_xalign(0.0)
+        self.append(self.secrets_result)
 
-        self.health_result = Gtk.Label(label="")
-        self.health_result.set_xalign(0.0)
+        # ------- Shortcuts (Config) editor -------
+        sc_hdr = Gtk.Label(label=_("Shortcuts (Config)"))
+        sc_hdr.set_xalign(0.0)
+        self.append(sc_hdr)
 
-        edit_box.append(row_btns)
-        edit_box.append(self.health_result)
-        self.append(edit_box)
+        sc_ctrl = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.manage_shortcuts_chk = Gtk.CheckButton(label=_("Auto-apply GNOME shortcuts"))
+        self.manage_shortcuts_chk.connect("toggled", self._on_manage_shortcuts_toggled)
+        self.shortcuts_auto_label = Gtk.Label(label="")
+        self.shortcuts_auto_label.set_xalign(0.0)
+        sc_ctrl.append(self.manage_shortcuts_chk)
+        sc_ctrl.append(self.shortcuts_auto_label)
+        self.append(sc_ctrl)
 
-        self.populate_edit_from_settings()
+        sc_scrolled = Gtk.ScrolledWindow()
+        sc_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sc_scrolled.set_min_content_height(220)
+        self.shortcuts_list = Gtk.ListBox()
+        self.shortcuts_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        sc_scrolled.set_child(self.shortcuts_list)
+        self.append(sc_scrolled)
 
-        # Profile block
+        sc_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_sc_add = Gtk.Button(label=_("Add row"))
+        btn_sc_add.connect("clicked", self._on_shortcuts_add_row_clicked)
+        btn_sc_save = Gtk.Button(label=_("Save (INI)"))
+        btn_sc_save.connect("clicked", self._on_shortcuts_save_clicked)
+        btn_sc_revert = Gtk.Button(label=_("Revert"))
+        btn_sc_revert.connect("clicked", self._on_shortcuts_revert_clicked)
+        btn_sc_apply = Gtk.Button(label=_("Apply now"))
+        btn_sc_apply.connect("clicked", self._on_shortcuts_apply_now_clicked)
+        btn_sc_remove_all = Gtk.Button(label=_("Remove all (GNOME)"))
+        btn_sc_remove_all.connect("clicked", self._on_shortcuts_remove_all_clicked)
+        self._btn_sc_apply = btn_sc_apply  # keep ref for sensitivity updates
+
+        for b in [btn_sc_add, btn_sc_save, btn_sc_revert, btn_sc_apply, btn_sc_remove_all]:
+            sc_btns.append(b)
+        self.append(sc_btns)
+
+        self.shortcuts_result = Gtk.Label(label="")
+        self.shortcuts_result.set_wrap(True)
+        self.shortcuts_result.set_xalign(0.0)
+        self.append(self.shortcuts_result)
+
+        # ------- Profile block -------
         prof_hdr = Gtk.Label(label=_("Profile"))
         prof_hdr.set_xalign(0.0)
         self.append(prof_hdr)
@@ -212,35 +241,37 @@ class SettingsPage(Gtk.Box):
         btn_show = Gtk.Button(label=_("Show"))
         btn_show.connect("clicked", self._on_profile_show_clicked)
         row1.append(btn_show)
-
         prof_box.append(row1)
 
         opts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.chk_overwrite_actions = Gtk.CheckButton(label=_("Overwrite actions"))
         try:
-            self.chk_overwrite_actions.set_tooltip_text("Overwrite existing actions in actions.json with the selected profile's definitions.")
+            self.chk_overwrite_actions.set_tooltip_text(_("Overwrite existing actions in actions.json with the selected profile's definitions."))
         except Exception:
             pass
-        self.chk_patch_settings = Gtk.CheckButton(label=_("Patch settings"))
+        self.chk_merge_endpoints = Gtk.CheckButton(label=_("Merge endpoints"))
         try:
-            self.chk_patch_settings.set_tooltip_text("Patch settings.ini with profile values (non-destructive where possible).")
+            self.chk_merge_endpoints.set_tooltip_text(_("Merge [endpoint.*] sections from profile into settings.ini"))
         except Exception:
             pass
-        self.chk_install_shortcuts = Gtk.CheckButton(label=_("Install shortcuts"))
+        self.chk_merge_secrets = Gtk.CheckButton(label=_("Merge secrets"))
         try:
-            self.chk_install_shortcuts.set_tooltip_text("Install GNOME custom keybindings in the wbridge scope (recommended).")
+            self.chk_merge_secrets.set_tooltip_text(_("Merge [secrets] from profile into settings.ini"))
+        except Exception:
+            pass
+        self.chk_merge_shortcuts = Gtk.CheckButton(label=_("Merge shortcuts"))
+        try:
+            self.chk_merge_shortcuts.set_tooltip_text(_("Merge [gnome.shortcuts] and shortcuts.json into settings.ini (no dconf write)"))
         except Exception:
             pass
         self.chk_dry_run = Gtk.CheckButton(label=_("Dry-run"))
         try:
-            self.chk_dry_run.set_tooltip_text("Preview changes without writing files.")
+            self.chk_dry_run.set_tooltip_text(_("Preview changes without writing files."))
         except Exception:
             pass
-        opts.append(self.chk_overwrite_actions)
-        opts.append(self.chk_patch_settings)
-        opts.append(self.chk_install_shortcuts)
-        opts.append(self.chk_dry_run)
 
+        for w in [self.chk_overwrite_actions, self.chk_merge_endpoints, self.chk_merge_secrets, self.chk_merge_shortcuts, self.chk_dry_run]:
+            opts.append(w)
         prof_box.append(opts)
 
         row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -253,19 +284,10 @@ class SettingsPage(Gtk.Box):
         self.profile_result.set_wrap(True)
         self.profile_result.set_xalign(0.0)
         prof_box.append(self.profile_result)
-
         self.append(prof_box)
 
-        # Convenience buttons
+        # ------- Autostart convenience -------
         btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_shortcuts_install = Gtk.Button(label=_("Install GNOME shortcuts"))
-        btn_shortcuts_install.connect("clicked", self._on_install_shortcuts_clicked)
-        btns.append(btn_shortcuts_install)
-
-        btn_shortcuts_remove = Gtk.Button(label=_("Remove GNOME shortcuts"))
-        btn_shortcuts_remove.connect("clicked", self._on_remove_shortcuts_clicked)
-        btns.append(btn_shortcuts_remove)
-
         btn_autostart_enable = Gtk.Button(label=_("Enable autostart"))
         btn_autostart_enable.connect("clicked", self._on_enable_autostart_clicked)
         btns.append(btn_autostart_enable)
@@ -281,6 +303,19 @@ class SettingsPage(Gtk.Box):
         self.settings_result.set_xalign(0.0)
         self.append(self.settings_result)
 
+        # Initial population
+        try:
+            self._rebuild_endpoints_list()
+        except Exception:
+            pass
+        try:
+            self._rebuild_secrets_editor()
+        except Exception:
+            pass
+        try:
+            self._rebuild_shortcuts_editor()
+        except Exception:
+            pass
 
     # --- Settings helpers ----------------------------------------------------
 
@@ -292,34 +327,6 @@ class SettingsPage(Gtk.Box):
         except Exception:
             return {}
 
-    def refresh_status(self) -> None:
-        try:
-            smap = self._get_settings_map()
-            integ = smap.get("integration", {})
-            enabled = str(integ.get("http_trigger_enabled", "false"))
-            base = str(integ.get("http_trigger_base_url", ""))
-            path = str(integ.get("http_trigger_trigger_path", ""))
-            self.integ_enabled_v.set_text(enabled)
-            self.integ_base_v.set_text(base)
-            self.integ_path_v.set_text(path)
-        except Exception:
-            self.integ_enabled_v.set_text("?")
-            self.integ_base_v.set_text("?")
-            self.integ_path_v.set_text("?")
-
-    def populate_edit_from_settings(self) -> None:
-        try:
-            smap = self._get_settings_map()
-            integ = smap.get("integration", {})
-            enabled = str(integ.get("http_trigger_enabled", "false")).lower() == "true"
-            base = str(integ.get("http_trigger_base_url", ""))
-            path = str(integ.get("http_trigger_trigger_path", ""))
-            self.integ_enabled_switch.set_active(enabled)
-            self.integ_base_entry.set_text(base)
-            self.integ_path_entry.set_text(path)
-        except Exception:
-            pass
-
     def reload_settings(self) -> None:
         """Reload settings from disk and notify dependent pages."""
         app = self._main.get_application()
@@ -328,8 +335,20 @@ class SettingsPage(Gtk.Box):
             setattr(app, "_settings", new_settings)
         except Exception:
             pass
-        self.refresh_status()
-        self.populate_edit_from_settings()
+
+        # Rebuild editors
+        try:
+            self._rebuild_endpoints_list()
+        except Exception:
+            pass
+        try:
+            self._rebuild_secrets_editor()
+        except Exception:
+            pass
+        try:
+            self._rebuild_shortcuts_editor()
+        except Exception:
+            pass
 
         # Dependent pages: actions list / triggers editor reflect settings changes
         try:
@@ -343,53 +362,377 @@ class SettingsPage(Gtk.Box):
         except Exception:
             pass
 
-    # --- Button handlers -----------------------------------------------------
+    # --- Endpoints editor ----------------------------------------------------
 
+    def _clear_listbox(self, lb: Gtk.ListBox) -> None:
+        child = lb.get_first_child()
+        while child is not None:
+            lb.remove(child)
+            child = lb.get_first_child()
 
-    def _on_reload_settings_clicked(self, _btn: Gtk.Button) -> None:
-        self.reload_settings()
+    def _rebuild_endpoints_list(self) -> None:
+        self._clear_listbox(self.endpoints_list)
+        settings = load_settings()
+        eps = list_endpoints(settings)
+        for eid, data in sorted(eps.items(), key=lambda kv: kv[0]):
+            self.endpoints_list.append(self._build_endpoint_row(eid, data))
+        self._set_endpoint_editing(None, None)
 
-    def _on_save_integration_clicked(self, _btn: Gtk.Button) -> None:
+    def _build_endpoint_row(self, eid: str, data: Dict[str, str]) -> Gtk.ListBoxRow:
+        base = str(data.get("base_url", ""))
+        health = str(data.get("health_path", "/health"))
+        trigger = str(data.get("trigger_path", "/trigger"))
+
+        grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+        c = 0
+
+        # Labels
+        lbl_id_k = Gtk.Label(label=_("ID:")); lbl_id_k.set_xalign(1.0)
+        lbl_id_v = Gtk.Label(label=eid); lbl_id_v.set_xalign(0.0)
+        grid.attach(lbl_id_k, c, 0, 1, 1); c += 1
+        grid.attach(lbl_id_v, c, 0, 1, 1); c += 1
+
+        lbl_base_k = Gtk.Label(label=_("Base URL:")); lbl_base_k.set_xalign(1.0)
+        lbl_base_v = Gtk.Label(label=base); lbl_base_v.set_xalign(0.0)
+        grid.attach(lbl_base_k, 0, 1, 1, 1)
+        grid.attach(lbl_base_v, 1, 1, 1, 1)
+
+        lbl_health_k = Gtk.Label(label=_("Health:")); lbl_health_k.set_xalign(1.0)
+        lbl_health_v = Gtk.Label(label=health); lbl_health_v.set_xalign(0.0)
+        grid.attach(lbl_health_k, 0, 2, 1, 1)
+        grid.attach(lbl_health_v, 1, 2, 1, 1)
+
+        lbl_trigger_k = Gtk.Label(label=_("Trigger:")); lbl_trigger_k.set_xalign(1.0)
+        lbl_trigger_v = Gtk.Label(label=trigger); lbl_trigger_v.set_xalign(0.0)
+        grid.attach(lbl_trigger_k, 0, 3, 1, 1)
+        grid.attach(lbl_trigger_v, 1, 3, 1, 1)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_health = Gtk.Button(label=_("Health"))
+        btn_edit = Gtk.Button(label=_("Edit"))
+        btn_del = Gtk.Button(label=_("Delete"))
+        btn_box.append(btn_health); btn_box.append(btn_edit); btn_box.append(btn_del)
+        grid.attach(btn_box, 1, 4, 1, 1)
+
+        status = Gtk.Label(label="")
+        status.set_xalign(0.0)
+        grid.attach(status, 1, 5, 1, 1)
+
+        row = Gtk.ListBoxRow()
+        row.set_child(grid)
+
+        # wire actions
+        def _on_health(_b):
+            try:
+                import urllib.request, urllib.error
+                url = f"{base}{health}"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=2.0) as resp:  # type: ignore[arg-type]
+                    code = getattr(resp, "status", 200)
+                    status.set_text(_("Health OK ({code}) – {url}").format(code=code, url=url))
+            except Exception as e:
+                status.set_text(_("Health FAILED – {err}").format(err=repr(e)))
+        btn_health.connect("clicked", _on_health)
+
+        def _on_edit(_b):
+            self._set_endpoint_editing(eid, {"base_url": base, "health_path": health, "trigger_path": trigger})
+        btn_edit.connect("clicked", _on_edit)
+
+        def _on_del(_b):
+            try:
+                ok = delete_endpoint(eid)
+                self.endpoints_result.set_text(_("Endpoint removed.") if ok else _("Endpoint not found."))
+                self.reload_settings()
+            except Exception as e:
+                self.endpoints_result.set_text(_("Delete failed: {err}").format(err=repr(e)))
+        btn_del.connect("clicked", _on_del)
+
+        return row
+
+    def _set_endpoint_editing(self, eid: Optional[str], data: Optional[Dict[str, str]]) -> None:
+        self._editing_endpoint_id = eid
+        if eid and data:
+            self.ep_add_id_entry.set_text(str(eid))
+            self.ep_add_base_entry.set_text(str(data.get("base_url", "")))
+            self.ep_add_health_entry.set_text(str(data.get("health_path", "/health")))
+            self.ep_add_trigger_entry.set_text(str(data.get("trigger_path", "/trigger")))
+            self.ep_add_btn.set_label(_("Save changes"))
+        else:
+            self.ep_add_id_entry.set_text("")
+            self.ep_add_base_entry.set_text("")
+            self.ep_add_health_entry.set_text("/health")
+            self.ep_add_trigger_entry.set_text("/trigger")
+            self.ep_add_btn.set_label(_("Add Endpoint"))
+
+    def _on_endpoint_add_or_save_clicked(self, _btn: Gtk.Button) -> None:
         try:
-            enabled = self.integ_enabled_switch.get_active()
-            base = self.integ_base_entry.get_text().strip()
-            path = self.integ_path_entry.get_text().strip()
-            if not base.startswith("http://") and not base.startswith("https://"):
-                self.settings_result.set_text(_("Invalid base URL (must start with http:// or https://)."))
+            eid_new = self.ep_add_id_entry.get_text().strip()
+            base = self.ep_add_base_entry.get_text().strip()
+            health = self.ep_add_health_entry.get_text().strip() or "/health"
+            trigger = self.ep_add_trigger_entry.get_text().strip() or "/trigger"
+            if not eid_new:
+                self.endpoints_result.set_text(_("Validation failed: id must not be empty"))
                 return
-            if not path.startswith("/"):
-                self.settings_result.set_text(_("Invalid trigger path (must start with '/')."))
+            if not (base.startswith("http://") or base.startswith("https://")):
+                self.endpoints_result.set_text(_("Invalid base URL (must start with http:// or https://)."))
                 return
-            # Persist integration settings
-            set_integration_settings(
-                http_trigger_enabled=bool(enabled),
-                http_trigger_base_url=base,
-                http_trigger_trigger_path=path
-            )
-            self.settings_result.set_text(_("Settings saved."))
+            if not health.startswith("/") or not trigger.startswith("/"):
+                self.endpoints_result.set_text(_("Invalid paths (must start with '/')."))
+                return
+
+            eid_old = self._editing_endpoint_id
+            # If ID changed, remove old section first
+            if eid_old and eid_old != eid_new:
+                try:
+                    delete_endpoint(eid_old)
+                except Exception:
+                    pass
+            upsert_endpoint(eid_new, base, health_path=health, trigger_path=trigger)
+            self.endpoints_result.set_text(_("Endpoint saved."))
             self.reload_settings()
         except Exception as e:
-            self.settings_result.set_text(_("Save failed: {err}").format(err=repr(e)))
+            self.endpoints_result.set_text(_("Save failed: {err}").format(err=repr(e)))
 
-    def _on_discard_integration_clicked(self, _btn: Gtk.Button) -> None:
-        self.reload_settings()
+    # --- Secrets editor ----------------------------------------------------
 
-    def _on_health_check_clicked(self, _btn: Gtk.Button) -> None:
-        # Perform a simple HTTP GET to base_url + health_path
+    def _rebuild_secrets_editor(self) -> None:
+        self._clear_listbox(self.secrets_list)
+        mapping = get_secrets_map(load_settings())
+        if not mapping:
+            self._add_secret_row("", "")
+        else:
+            for k, v in sorted(mapping.items(), key=lambda kv: kv[0]):
+                self._add_secret_row(str(k), str(v))
+
+    def _add_secret_row(self, key: str, value: str) -> None:
+        grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+
+        lbl_key = Gtk.Label(label=_("Key:")); lbl_key.set_xalign(1.0)
+        e_key = Gtk.Entry(); e_key.set_text(key); e_key.set_width_chars(20)
+
+        lbl_val = Gtk.Label(label=_("Value:")); lbl_val.set_xalign(1.0)
+        e_val = Gtk.Entry(); e_val.set_text(value); e_val.set_hexpand(True)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_del = Gtk.Button(label=_("Delete"))
+        btn_row.append(btn_del)
+
+        grid.attach(lbl_key, 0, 0, 1, 1)
+        grid.attach(e_key, 1, 0, 1, 1)
+        grid.attach(lbl_val, 0, 1, 1, 1)
+        grid.attach(e_val, 1, 1, 1, 1)
+        grid.attach(btn_row, 1, 2, 1, 1)
+
+        row = Gtk.ListBoxRow()
+        row.set_child(grid)
+        row._wbridge_secret_key_entry = e_key  # type: ignore[attr-defined]
+        row._wbridge_secret_val_entry = e_val  # type: ignore[attr-defined]
+
+        def _on_del(_b):
+            try:
+                self.secrets_list.remove(row)
+                self.secrets_result.set_text(_("Row removed."))
+            except Exception as e:
+                self.secrets_result.set_text(_("Delete failed: {err}").format(err=repr(e)))
+        btn_del.connect("clicked", _on_del)  # type: ignore[name-defined]
+
+        self.secrets_list.append(row)
+
+    def _on_secrets_add_row_clicked(self, _btn: Gtk.Button) -> None:
+        self._add_secret_row("", "")
         try:
-            smap = self._get_settings_map()
-            integ = smap.get("integration", {})
-            base = str(integ.get("http_trigger_base_url", "") or "")
-            hpath = str(integ.get("http_trigger_health_path", "/health") or "/health")
-            import urllib.request
-            import urllib.error
-            url = f"{base}{hpath}"
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=2.0) as resp:  # type: ignore[arg-type]
-                code = getattr(resp, "status", 200)
-                self.health_result.set_text(f"Health OK ({code}) – {url}")
+            last = self.secrets_list.get_last_child()
+            if isinstance(last, Gtk.ListBoxRow):
+                getattr(last, "_wbridge_secret_key_entry").grab_focus()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def _collect_secrets_mapping(self) -> Dict[str, str]:
+        mapping: Dict[str, str] = {}
+        child = self.secrets_list.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.ListBoxRow):
+                e_key = getattr(child, "_wbridge_secret_key_entry", None)
+                e_val = getattr(child, "_wbridge_secret_val_entry", None)
+                key = (e_key.get_text() if e_key else "").strip()
+                val = (e_val.get_text() if e_val else "").strip()
+                if key and val:
+                    mapping[key] = val
+            child = child.get_next_sibling()
+        return mapping
+
+    def _on_secrets_save_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            mapping = self._collect_secrets_mapping()
+            set_secrets_map(mapping)
+            self.secrets_result.set_text(_("Secrets saved ({n} entries).").format(n=len(mapping)))
+            self.reload_settings()
         except Exception as e:
-            self.health_result.set_text(f"Health FAILED – {e!r}")
+            self.secrets_result.set_text(_("Save failed: {err}").format(err=repr(e)))
+
+    def _on_secrets_revert_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            self._rebuild_secrets_editor()
+            self.secrets_result.set_text(_("Reverted to INI."))
+        except Exception as e:
+            self.secrets_result.set_text(_("Revert failed: {err}").format(err=repr(e)))
+
+    # --- Shortcuts editor ----------------------------------------------------
+
+    def _rebuild_shortcuts_editor(self) -> None:
+        # manage_shortcuts
+        smap = self._get_settings_map()
+        manage = False
+        try:
+            manage = str(smap.get("gnome", {}).get("manage_shortcuts", "true")).lower() == "true"
+        except Exception:
+            manage = False
+        try:
+            self.manage_shortcuts_chk.set_active(bool(manage))
+        except Exception:
+            pass
+        self._update_auto_apply_status()
+
+        # mapping rows
+        self._clear_listbox(self.shortcuts_list)
+        mapping = get_shortcuts_map(load_settings())
+        if not mapping:
+            # start with a helpful empty row
+            self._add_shortcut_row("", "")
+        else:
+            for alias, binding in sorted(mapping.items(), key=lambda kv: kv[0]):
+                self._add_shortcut_row(str(alias), str(binding))
+
+    def _add_shortcut_row(self, alias: str, binding: str) -> None:
+        grid = Gtk.Grid(column_spacing=8, row_spacing=4)
+
+        lbl_alias = Gtk.Label(label=_("Alias:")); lbl_alias.set_xalign(1.0)
+        e_alias = Gtk.Entry(); e_alias.set_text(alias); e_alias.set_width_chars(16)
+        lbl_bind = Gtk.Label(label=_("Binding:")); lbl_bind.set_xalign(1.0)
+        e_bind = Gtk.Entry(); e_bind.set_text(binding); e_bind.set_hexpand(True)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_del = Gtk.Button(label=_("Delete"))
+        btn_row.append(btn_del)
+
+        grid.attach(lbl_alias, 0, 0, 1, 1)
+        grid.attach(e_alias, 1, 0, 1, 1)
+        grid.attach(lbl_bind, 0, 1, 1, 1)
+        grid.attach(e_bind, 1, 1, 1, 1)
+        grid.attach(btn_row, 1, 2, 1, 1)
+
+        row = Gtk.ListBoxRow()
+        row.set_child(grid)
+        row._wbridge_alias_entry = e_alias  # type: ignore[attr-defined]
+        row._wbridge_bind_entry = e_bind  # type: ignore[attr-defined]
+
+        def _on_del(_b):
+            try:
+                self.shortcuts_list.remove(row)
+                self._notify_sc(_("Row removed."))
+            except Exception as e:
+                self._notify_sc(_("Delete failed: {err}").format(err=repr(e)))
+        btn_del.connect("clicked", _on_del)  # type: ignore[name-defined]
+
+        self.shortcuts_list.append(row)
+
+    def _on_shortcuts_add_row_clicked(self, _btn: Gtk.Button) -> None:
+        self._add_shortcut_row("", "")
+        try:
+            # focus new alias field
+            last = self.shortcuts_list.get_last_child()
+            if isinstance(last, Gtk.ListBoxRow):
+                getattr(last, "_wbridge_alias_entry").grab_focus()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def _collect_shortcuts_mapping(self) -> Dict[str, str]:
+        mapping: Dict[str, str] = {}
+        child = self.shortcuts_list.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.ListBoxRow):
+                e_alias = getattr(child, "_wbridge_alias_entry", None)
+                e_bind = getattr(child, "_wbridge_bind_entry", None)
+                alias = (e_alias.get_text() if e_alias else "").strip()
+                bind = (e_bind.get_text() if e_bind else "").strip()
+                if alias and bind:
+                    mapping[alias] = bind
+            child = child.get_next_sibling()
+        return mapping
+
+    def _on_shortcuts_save_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            mapping = self._collect_shortcuts_mapping()
+            set_shortcuts_map(mapping)
+            set_manage_shortcuts(bool(self.manage_shortcuts_chk.get_active()))
+            # After saving INI, auto-apply if enabled
+            if bool(self.manage_shortcuts_chk.get_active()):
+                smap = load_settings().as_mapping()
+                res = gnome_shortcuts.sync_from_ini(smap, auto_remove=True)
+                self._notify_sc(_("Saved and applied: installed={i} updated={u} removed={r} skipped={s}").format(
+                    i=res.get("installed", 0),
+                    u=res.get("updated", 0),
+                    r=res.get("removed", 0),
+                    s=res.get("skipped", 0),
+                ))
+            else:
+                self._notify_sc(_("Saved. Auto-apply is OFF."))
+            self.reload_settings()
+        except Exception as e:
+            self._notify_sc(_("Save failed: {err}").format(err=repr(e)))
+
+    def _on_shortcuts_revert_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            self._rebuild_shortcuts_editor()
+            self._notify_sc(_("Reverted to INI."))
+        except Exception as e:
+            self._notify_sc(_("Revert failed: {err}").format(err=repr(e)))
+
+    def _on_shortcuts_apply_now_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            smap = load_settings().as_mapping()
+            res = gnome_shortcuts.sync_from_ini(smap, auto_remove=True)
+            self._notify_sc(_("Applied: installed={i} updated={u} removed={r} skipped={s}").format(
+                i=res.get("installed", 0),
+                u=res.get("updated", 0),
+                r=res.get("removed", 0),
+                s=res.get("skipped", 0),
+            ))
+        except Exception as e:
+            self._notify_sc(_("Apply failed: {err}").format(err=repr(e)))
+
+    def _on_shortcuts_remove_all_clicked(self, _btn: Gtk.Button) -> None:
+        try:
+            rep = gnome_shortcuts.remove_all_wbridge_shortcuts()
+            self._notify_sc(_("All wbridge shortcuts removed: removed={removed}, kept={kept}.").format(
+                removed=rep.get("removed", 0), kept=rep.get("kept", 0)
+            ))
+        except Exception as e:
+            self._notify_sc(_("Remove failed: {err}").format(err=repr(e)))
+
+    def _on_manage_shortcuts_toggled(self, _chk: Gtk.CheckButton) -> None:
+        self._update_auto_apply_status()
+
+    def _update_auto_apply_status(self) -> None:
+        on = False
+        try:
+            on = bool(self.manage_shortcuts_chk.get_active())
+        except Exception:
+            on = False
+        self.shortcuts_auto_label.set_text(_("Auto-apply: {state}").format(state=_("ON") if on else _("OFF")))
+        try:
+            # Apply-now button only useful when auto-apply is OFF
+            self._btn_sc_apply.set_sensitive(not on)
+        except Exception:
+            pass
+
+    def _notify_sc(self, text: str) -> None:
+        try:
+            self.shortcuts_result.set_text(text)
+        except Exception:
+            pass
+
+    # --- Profile handlers ----------------------------------------------------
 
     def _on_profile_show_clicked(self, _btn: Gtk.Button) -> None:
         pid = self.profile_combo.get_active_id()
@@ -419,8 +762,9 @@ class SettingsPage(Gtk.Box):
             report = pm_install_profile(
                 pid,
                 overwrite_actions=bool(self.chk_overwrite_actions.get_active()),
-                patch_settings=bool(self.chk_patch_settings.get_active()),
-                install_shortcuts=bool(self.chk_install_shortcuts.get_active()),
+                merge_endpoints=bool(self.chk_merge_endpoints.get_active()),
+                merge_secrets=bool(self.chk_merge_secrets.get_active()),
+                merge_shortcuts=bool(self.chk_merge_shortcuts.get_active()),
                 dry_run=bool(self.chk_dry_run.get_active()),
             )
             acts = report.get("actions", {})
@@ -432,8 +776,8 @@ class SettingsPage(Gtk.Box):
                 f"Install-Report (ok={report.get('ok')} dry_run={report.get('dry_run')}):\n"
                 f"- actions: added={acts.get('added',0)} updated={acts.get('updated',0)} skipped={acts.get('skipped',0)}\n"
                 f"- triggers: added={trigs.get('added',0)} updated={trigs.get('updated',0)} skipped={trigs.get('skipped',0)}\n"
-                f"- settings: patched={len(sets.get('patched',[]))} skipped={len(sets.get('skipped',[]))}\n"
-                f"- shortcuts: installed={sc.get('installed',0)} skipped={sc.get('skipped',0)}\n"
+                f"- settings: merged={len(sets.get('merged',[]))} skipped={len(sets.get('skipped',[]))}\n"
+                f"- shortcuts: merged={sc.get('merged',0)} skipped={sc.get('skipped',0)}\n"
                 f"- errors: {len(errors)}"
             )
             self.profile_result.set_text(txt)
@@ -442,69 +786,7 @@ class SettingsPage(Gtk.Box):
         except Exception as e:
             self.profile_result.set_text(_("Error: {err}").format(err=repr(e)))
 
-    def _on_install_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
-        try:
-            # 1) try settings.ini [gnome]
-            smap = self._get_settings_map()
-            gsec = smap.get("gnome", {}) if isinstance(smap, dict) else {}
-            b_prompt = gsec.get("binding_prompt")
-            b_command = gsec.get("binding_command")
-            b_ui = gsec.get("binding_ui_show")
-            if b_prompt or b_command or b_ui:
-                bindings = {}
-                if b_prompt: bindings["prompt"] = b_prompt
-                if b_command: bindings["command"] = b_command
-                if b_ui: bindings["ui_show"] = b_ui
-                gnome_shortcuts.install_recommended_shortcuts(bindings)
-                self.settings_result.set_text(_("GNOME shortcuts installed (settings.ini takes priority)."))
-                return
-
-            # 2) fallback to profile shortcuts
-            pid = self.profile_combo.get_active_id() if hasattr(self, "profile_combo") else None
-            if pid and pid not in ("none", "err", None):
-                items = load_profile_shortcuts(pid)
-                if items:
-                    installed = skipped = 0
-                    import re
-                    for sc in items:
-                        try:
-                            name = str(sc.get("name") or "")
-                            cmd = str(sc.get("command") or "")
-                            binding = str(sc.get("binding") or "")
-                            if not name or not cmd or not binding:
-                                skipped += 1
-                                continue
-                            norm = re.sub(r"[^a-z0-9\\-]+", "-", name.lower()).strip("-")
-                            suffix = f"wbridge-{norm}/"
-                            gnome_shortcuts.install_binding(suffix, name, cmd, binding)
-                            installed += 1
-                        except Exception:
-                            skipped += 1
-                    self.settings_result.set_text(_("Profile shortcuts installed: installed={installed}, skipped={skipped}.").format(installed=installed, skipped=skipped))
-                    return
-
-            # 3) defaults
-            defaults = {
-                "prompt": "<Ctrl><Alt>p",
-                "command": "<Ctrl><Alt>m",
-                "ui_show": "<Ctrl><Alt>u",
-            }
-            gnome_shortcuts.install_recommended_shortcuts(defaults)
-            self.settings_result.set_text(_("GNOME shortcuts installed (default recommendations)."))
-        except Exception as e:
-            self.settings_result.set_text(_("Installing GNOME shortcuts failed: {err}").format(err=repr(e)))
-
-    def _on_remove_shortcuts_clicked(self, _btn: Gtk.Button) -> None:
-        try:
-            gnome_shortcuts.remove_recommended_shortcuts()
-            msg = _("Recommended GNOME shortcuts removed.")
-            pid = self.profile_combo.get_active_id() if hasattr(self, "profile_combo") else None
-            if pid and pid not in ("none", "err", None):
-                rep = remove_profile_shortcuts(pid)
-                msg += _(" Profile shortcuts removed: removed={removed}, skipped={skipped}.").format(removed=rep.get('removed',0), skipped=rep.get('skipped',0))
-            self.settings_result.set_text(msg)
-        except Exception as e:
-            self.settings_result.set_text(_("Removing GNOME shortcuts failed: {err}").format(err=repr(e)))
+    # --- Autostart convenience ----------------------------------------------
 
     def _on_enable_autostart_clicked(self, _btn: Gtk.Button) -> None:
         try:

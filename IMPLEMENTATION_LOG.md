@@ -11,6 +11,53 @@ Conventions
 - Links: issue/PR if available (future)
 
 ---
+
+## 2025-08-22 – V2 Hard Switch: settings.ini as SoT; Endpoints/Secrets/Shortcuts; merge_*; Secrets editor; cleanup integration.*
+
+- Timestamp: 2025-08-22
+- Scope:
+  - Config (V2 schema):
+    - Entfernt: DEFAULT_SETTINGS["integration"], sämtliche http_trigger_* Verwendungen und set_integration_settings().
+    - Neu in src/wbridge/config.py:
+      - Endpoints: list_endpoints(), upsert_endpoint(), delete_endpoint()
+      - Shortcuts (INI): get_shortcuts_map(), set_shortcuts_map(), set_manage_shortcuts()
+      - Secrets: get_secrets_map(), set_secrets_map()
+  - GNOME Shortcuts:
+    - src/wbridge/gnome_shortcuts.py: list_installed() (Audit), sync_from_ini(settings_map, auto_remove=True) für deterministische Synchronisation aus [gnome.shortcuts]; einheitlicher Suffix wbridge-<slug>/
+  - Profiles/CLI:
+    - src/wbridge/profiles_manager.py: install_profile() Flags auf merge_endpoints/merge_secrets/merge_shortcuts umgestellt; Reports vereinheitlicht (merged/skipped)
+    - src/wbridge/cli.py: profile install → --merge-endpoints/--merge-secrets/--merge-shortcuts/--dry-run; Help-Texte aktualisiert; Restore-Heuristik für V2-Sektionen
+  - UI:
+    - SettingsPage (src/wbridge/ui/pages/settings_page.py):
+      - Endpoints-Editor (ID, Base URL, Health, Trigger, Health-Check je Zeile)
+      - Secrets-Editor (Key/Value, Save/Revert)
+      - Shortcuts (INI)-Editor mit Auto-apply, Apply now, Remove all
+      - Profile-Installer mit merge_* Flags
+    - ShortcutsPage (src/wbridge/ui/pages/shortcuts_page.py): Audit-Ansicht (Alias | INI | Installed), Save/Apply/Remove all/Reload
+    - ActionsPage: Legacy „HTTP trigger enabled“-Gate entfernt; Run-Button immer nutzbar
+    - MainWindow: Legacy „Integration Inline Edit“ neutralisiert; Hinweise angepasst
+  - App:
+    - src/wbridge/app.py: entfernte Legacy-Alias-Fallbacks von [integration].obsidian_token nach [secrets]
+  - Doku:
+    - DESIGN.md komplett auf V2 umgestellt (Endpoints/Secrets/Shortcuts, merge_* Flags, ohne [integration.*])
+    - Help: settings.md/actions.md an V2-Placeholders {config.endpoint.*}/{config.secrets.*} angepasst
+    - README.md aktualisiert (V2 Schema, Endpoints/Shortcuts/Secrets, CLI merge_*)
+- Affected files:
+  - src/wbridge/config.py, src/wbridge/gnome_shortcuts.py, src/wbridge/profiles_manager.py, src/wbridge/cli.py,
+    src/wbridge/ui/pages/{settings_page.py,shortcuts_page.py,actions_page.py}, src/wbridge/ui/main_window.py,
+    src/wbridge/app.py, src/wbridge/help/en/{settings.md,actions.md}, DESIGN.md, README.md
+- Tests (manuell/Smoke):
+  - Settings → Endpoints: Add/Edit/Delete, Health GET base+health_path (2s Timeout) OK/NOK
+  - Settings → Secrets: Key/Value Save/Revert; Platzhalter {config.secrets.KEY} in Aktionen wird ersetzt
+  - Settings → Shortcuts (INI): Auto-apply ON synchronisiert GNOME sofort; OFF erfordert Apply now; Remove all entfernt wbridge-*
+  - ShortcutsPage: Audit zeigt INI vs Installed; Apply/Reload/Remove all funktionieren
+  - Actions: HTTP/Shell mit {config.endpoint.<id>.*} und {config.secrets.*} funktionieren; Run immer verfügbar
+  - CLI: profile install --merge-*; Reports merged/skipped; Backup erstellt
+- Notes:
+  - Harte Umstellung ohne Migration; keine Legacy [integration.*] in Code/UI/Docs
+  - Deprecated: install_recommended_shortcuts/remove_recommended_shortcuts behalten, aber nicht Teil des V2-Sync-Workflows
+
+---
  
 ## 2025-08-19 – UI-Polish: Popover-only Help, Responsivität, Actions-Split-Logik stabilisiert
 
@@ -202,7 +249,7 @@ Conventions
 - Local commit:
   - tbd (nach Push): feat(gui,ipc): History‑IPC, History‑UI mit „Aktuell“, Actions‑Tab, Settings‑Basis; Async‑Guards/Dirty‑Refresh; CLI‑Integration
 - Notes:
-  - Bugfixes: „Doppel‑Klick nötig“ und „Hängen nach erster Selektion“ behoben durch sofortige History‑Aktualisierung, asynchrones Label‑Update, Dirty‑Flag‑Refresh und In‑Flight‑Guards.
+  - Bugfixes: „Doppel‑Klick nötig“ und „Hängen nach erster Selektion“ behoben durch sofortige History‑Aktualisierung, asynchrone Label‑Update, Dirty‑Flag‑Refresh und In‑Flight‑Guards.
 
 ## 2025-08-12 – Initial scaffold, push to org
 

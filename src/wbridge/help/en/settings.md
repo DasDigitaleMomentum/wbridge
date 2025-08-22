@@ -1,157 +1,173 @@
-# Settings
+# Settings (V2 Configuration Model)
 
-Problem & Goal
-You want to configure integration once and manage profiles, GNOME shortcuts, and autostart from a single place — without editing files manually. 
-The Settings page gives you status, inline edit, quick installers, and a health check.
+Goal
+Manage everything from one place without editing files manually. The Settings page is the single source of truth for:
+- Endpoints (HTTP base + paths) under [endpoint.<id>]
+- Secrets under [secrets]
+- GNOME shortcuts mapping under [gnome.shortcuts] with optional Auto-apply
+- Profile installation (merge into settings.ini and actions.json)
+- Autostart
 
-What’s on this page
-- Integration Status: live view of HTTP trigger settings, IPC socket, and log path
-- Inline Edit: enable/disable HTTP trigger, Base URL, Trigger Path
-- Profiles: install curated presets (actions, triggers, settings patches, shortcuts)
-- GNOME Shortcuts: install or remove recommended keybindings
-- Autostart: start wbridge automatically in your session
-- Result messages: success/errors for each operation
+All runtime placeholders in actions resolve against settings.ini.
 
 ---
 
-## Key terms
-
-- HTTP trigger: Optional backend that lets other apps invoke `wbridge` via HTTP (e.g., `POST /trigger`). You control Base URL and paths.
-- Base URL: The host:port of your HTTP server (e.g., `http://localhost:8808`).
-- Trigger Path: The request path used for invocations (default `/trigger`).
-- Health check: A GET to `/health` (or configured path) to verify the backend is reachable.
-- IPC socket: Local Unix domain socket where the GUI app accepts CLI requests.
-- Profile: A curated package that can write actions/triggers, patch settings, and install GNOME shortcuts.
-- GNOME shortcuts: Custom keybindings that execute `wbridge ...` commands (no global key grabs).
-
----
-
-## Process (overview)
-
-1) Review Integration Status (HTTP trigger on/off, Base URL/Path, IPC socket, log file).
-2) Edit settings inline if needed and Save (validation applies).
-3) Use Profiles to install a preset (dry‑run recommended first).
-4) Install recommended GNOME shortcuts.
-5) Enable Autostart to keep wbridge ready after login.
-6) Use the Health check to verify your HTTP integration.
+What’s on this page (V2)
+- Endpoints editor:
+  - Table of endpoints (ID | Base URL | Health | Trigger) with Actions: Health, Edit, Delete
+  - Add row (ID, Base URL, Health path, Trigger path) with validation
+- Shortcuts (Config) editor:
+  - Edit [gnome.shortcuts] alias → binding entries
+  - Auto-apply toggle ([gnome].manage_shortcuts)
+  - Buttons: Save (INI), Revert, Apply now (visible when Auto-apply = OFF), Remove all (GNOME)
+- Profiles:
+  - Install a curated preset with flags: Overwrite actions, Merge endpoints, Merge secrets, Merge shortcuts, Dry-run
+- Autostart:
+  - Enable/Disable wbridge autostart
+- Basic info:
+  - IPC socket path, log file path
 
 ---
 
-## Step‑by‑step (quick start)
+INI schema (authoritative)
+- [endpoint.<id>]
+  - base_url (http/https)
+  - health_path (default /health)
+  - trigger_path (default /trigger)
+  - <id> is a slug [a-z0-9_-]+
+- [secrets]
+  - arbitrary key/value secrets (e.g., obsidian_token)
+- [gnome]
+  - manage_shortcuts = true|false (default true)
+- [gnome.shortcuts]
+  - alias = <binding> (e.g., prompt = <Ctrl><Alt>p)
 
-Integration (HTTP trigger)
-1) Open Settings → Integration.
-2) Toggle “Enable HTTP trigger” on if you plan to call wbridge from other apps/services.
-3) Set “Base URL”, e.g., `http://localhost:8808`.
-4) Set “Trigger Path”, e.g., `/trigger`.
-5) Click Save. Validation ensures:
-   - Base URL starts with `http://` or `https://`
-   - Trigger Path starts with `/`
-6) Click Health check to verify `Base URL + /health` (or your configured path).
+Example settings.ini
+```
+[endpoint.local]
+base_url = http://127.0.0.1:8808
+health_path = /health
+trigger_path = /trigger
 
-Profiles
-1) Choose a profile (e.g., `witsy`) from the dropdown.
-2) Click Show to see a compact summary.
-3) Select options:
-   - Overwrite actions (write profile actions to `~/.config/wbridge/actions.json`)
-   - Patch settings (non‑destructive changes to `~/.config/wbridge/settings.ini`)
-   - Install shortcuts (install profile keybindings)
-   - Dry‑run (preview changes; recommended first)
-4) Click Install. The page refreshes status after completion.
+[secrets]
+obsidian_token = YOUR_TOKEN_HERE
 
-GNOME Shortcuts
-1) Click “Install GNOME Shortcuts”.
-   - Priority order:
-     1) If `[gnome]` bindings exist in your `settings.ini`, install those.
-     2) Else, if a profile is selected and provides `shortcuts.json`, install those.
-     3) Else, install the default recommended set:
-        - Prompt: `<Ctrl><Alt>p`
-        - Command: `<Ctrl><Alt>m`
-        - Show UI: `<Ctrl><Alt>u`
-2) Later, use the Shortcuts page to edit bindings, audit conflicts, or remove entries.
+[gnome]
+manage_shortcuts = true
+
+[gnome.shortcuts]
+prompt = <Ctrl><Alt>p
+command = <Ctrl><Alt>m
+ui_show = <Ctrl><Alt>u
+```
+
+---
+
+Placeholders in actions
+- {config.endpoint.<id>.base_url}, {config.endpoint.<id>.health_path}, {config.endpoint.<id>.trigger_path}
+- {config.secrets.<key>}
+- Other common placeholders: {text}, {selection.type}
+
+Example usage in an action
+```
+{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}
+```
+
+---
+
+Endpoints editor
+- Add/Edit/Delete endpoints deterministically under [endpoint.<id>].
+- Validate:
+  - base_url must start with http:// or https://
+  - health_path and trigger_path must start with /
+- Health:
+  - Click Health on a row to GET base_url + health_path (2s timeout) and display status.
+
+Shortcuts (Config) editor
+- Manage the declarative mapping in settings.ini under [gnome.shortcuts].
+- Auto-apply:
+  - When ON, saving the INI immediately synchronizes GNOME custom keybindings.
+  - When OFF, use Apply now to trigger synchronization.
+- Remove all:
+  - Removes all GNOME custom keybindings whose suffix starts with wbridge- (INI remains unchanged).
+
+Profiles (install)
+- Options:
+  - Overwrite actions
+  - Merge endpoints (merge [endpoint.*] into settings.ini)
+  - Merge secrets (merge [secrets] into settings.ini)
+  - Merge shortcuts (merge [gnome.shortcuts] from profile settings and shortcuts.json into settings.ini; no direct dconf writes)
+  - Dry-run (preview)
+- Result shows added/updated/skipped for actions/triggers and merged/skipped for settings/shortcuts.
 
 Autostart
-1) Click “Enable autostart” to create a desktop entry in your session (visible app on login).
-2) Use “Disable autostart” to remove it.
+- Enable or disable a desktop entry so wbridge starts after login.
 
 ---
 
-## Examples
-
-Health check
-- After saving HTTP settings, run Health check. Expected: a success message if your backend replies at `GET /health`.
-- If it fails, verify the Base URL and server availability, then check the Status page (Log tail).
-
-Profile install (typical)
-- Select “witsy”, enable:
-  - Overwrite actions
-  - Patch settings
-  - Install shortcuts
-  - Dry‑run first
-- Click Install; review dry‑run; then Install again without Dry‑run to apply.
-
-PATH hint (shortcuts)
-- If `wbridge` is not in PATH, GNOME shortcuts won’t run as expected.
-- Solutions:
-  - Install via pipx (`pipx install --system-site-packages ...`)
-  - Ensure `~/.local/bin` is in PATH
-  - Or set an absolute path in the shortcut command
+Process (quick start)
+1) Add an endpoint in Endpoints:
+   - ID local, Base URL http://127.0.0.1:8808, Health /health, Trigger /trigger
+   - Validate then Save
+2) Configure shortcuts:
+   - Add bindings under Shortcuts (Config), toggle Auto-apply as desired
+   - Save (INI); if Auto-apply is OFF, click Apply now
+3) Install a profile:
+   - Choose a profile, Show to inspect
+   - Select flags (e.g., Overwrite actions, Merge endpoints/secrets/shortcuts, Dry-run)
+   - Install and review the report
+4) Enable Autostart if desired
 
 ---
 
-## Validation & persistence
+Examples
 
-- Inline Edit Save:
-  - Validates Base URL scheme (`http://` or `https://`) and Trigger Path (`/` prefix)
-  - Writes atomically to `~/.config/wbridge/settings.ini`
-- Profiles:
-  - `Overwrite actions` writes to `~/.config/wbridge/actions.json` (backup created)
-  - `Patch settings` updates `~/.config/wbridge/settings.ini` non‑destructively
-  - `Install shortcuts` writes GNOME bindings via `Gio.Settings`
-- Auto‑reload:
-  - File monitors refresh the UI when `settings.ini` or `actions.json` change on disk (debounced)
+HTTP action using endpoint placeholders
+```json
+{
+  "name": "Trigger via local endpoint",
+  "type": "http",
+  "method": "POST",
+  "url": "{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}",
+  "json": { "text": "{text}", "source": "{selection.type}" }
+}
+```
 
----
-
-## Good practices
-
-- Use Dry‑run for profiles before applying changes.
-- Keep action names stable; triggers and shortcuts often rely on names.
-- Store HTTP endpoints on localhost for local workflows; secure external endpoints appropriately.
-- Keep the Status page open while testing to correlate actions with logs.
-
----
-
-## Troubleshooting
-
-Health check fails
-- Verify Base URL/Trigger Path, ensure backend is running.
-- Check the Status page (log tail) for connection/timeouts and details.
-
-Shortcuts don’t work
-- Confirm `wbridge` is on PATH or use an absolute command path.
-- Check for binding conflicts on the Shortcuts page.
-- If GNOME dconf writes are delayed, try reloading the page or restarting GNOME Shell/session.
-
-Actions/triggers don’t update
-- Wait briefly for file monitor debounce or click “Reload Settings” / “Reload actions”.
-- Ensure `actions.json` is valid JSON.
-
-Autostart didn’t enable
-- Check the result message.
-- Inspect your session’s autostart directory for the created entry.
+Obsidian Local REST API token (in [secrets])
+- settings.ini:
+```
+[secrets]
+obsidian_token = YOUR_TOKEN_HERE
+```
+- Action header:
+```json
+{
+  "headers": {
+    "Authorization": "Bearer {config.secrets.obsidian_token}",
+    "Content-Type": "text/markdown"
+  },
+  "body_is_text": true
+}
+```
 
 ---
 
-## Glossary & links
+Validation & persistence
+- All writes are atomic and create backups where applicable.
+- File monitors auto-reload settings/actions in the UI after changes on disk.
 
-- HTTP trigger: optional integration to call `wbridge` via HTTP
-- Profiles: curated presets that set up actions/triggers/settings/shortcuts
-- Shortcuts: GNOME keybindings that run `wbridge` commands
-- Autostart: start wbridge on login
+Troubleshooting
+- Health fails:
+  - Verify endpoint Base URL/Health path and that the service is running.
+- Shortcuts didn’t change:
+  - If Auto-apply is OFF, use Apply now.
+  - Confirm wbridge is on PATH or use an absolute command in GNOME keybindings.
+- Profile didn’t merge:
+  - Use Dry-run to inspect what would change.
+  - Ensure profile contains the sections you expect (endpoint.*, secrets, gnome.shortcuts).
 
 Related pages
-- Actions: `help/en/actions.md`
-- Triggers: `help/en/triggers.md`
-- Shortcuts: `help/en/shortcuts.md`
-- Status (logs): `help/en/status.md`
+- Actions: help/en/actions.md
+- Shortcuts: help/en/shortcuts.md
+- Status (logs): help/en/status.md
+- Triggers: help/en/triggers.md

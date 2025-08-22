@@ -180,8 +180,9 @@ def cmd_profile_install(args: argparse.Namespace) -> int:
         report = profiles_install(
             name,
             overwrite_actions=bool(args.overwrite_actions),
-            patch_settings=bool(args.patch_settings),
-            install_shortcuts=bool(args.install_shortcuts),
+            merge_endpoints=bool(args.merge_endpoints),
+            merge_secrets=bool(args.merge_secrets),
+            merge_shortcuts=bool(args.merge_shortcuts),
             dry_run=bool(args.dry_run),
         )
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -292,7 +293,7 @@ def cmd_config_restore(args: argparse.Namespace) -> int:
                 text = src.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 text = ""
-            if "[general]" in text or "[integration]" in text:
+            if "[general]" in text or "[secrets]" in text or "[gnome]" in text or "[gnome.shortcuts]" in text or "[endpoint." in text:
                 tgt = Path(paths["settings"])
             else:
                 tgt = Path(paths["actions"])
@@ -410,11 +411,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_prof_show.add_argument("--name", required=True, help="profile name to show (e.g., witsy)")
     p_prof_show.set_defaults(func=cmd_profile_show)
 
-    p_prof_install = sub_prof.add_parser("install", help="install a profile into user config")
+    p_prof_install = sub_prof.add_parser("install", help="install a profile: merge into settings.ini and actions.json (no direct dconf write)")
     p_prof_install.add_argument("--name", required=True, help="profile name to install (e.g., witsy)")
     p_prof_install.add_argument("--overwrite-actions", action="store_true", help="overwrite existing actions/triggers with the same names")
-    p_prof_install.add_argument("--patch-settings", action="store_true", help="patch whitelisted settings in [integration]")
-    p_prof_install.add_argument("--install-shortcuts", action="store_true", help="install recommended GNOME shortcuts from the profile")
+    p_prof_install.add_argument("--merge-endpoints", action="store_true", help="merge [endpoint.*] sections from profile into settings.ini")
+    p_prof_install.add_argument("--merge-secrets", action="store_true", help="merge [secrets] from profile into settings.ini")
+    p_prof_install.add_argument("--merge-shortcuts", action="store_true", help="merge [gnome.shortcuts] and shortcuts.json into settings.ini (no dconf write)")
     p_prof_install.add_argument("--dry-run", action="store_true", help="do not write files; print planned changes")
     p_prof_install.set_defaults(func=cmd_profile_install)
 

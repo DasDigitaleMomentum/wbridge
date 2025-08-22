@@ -120,3 +120,204 @@ def remove_recommended_shortcuts() -> None:
     _ensure_gio()
     for key, suffix in PATH_SUFFIXES.items():
         remove_binding(suffix)
+
+
+# ---------------- V2 generic helpers (INI as SoT) ----------------
+
+def _slug(s: str) -> str:
+    try:
+        import re
+        return re.sub(r"[^a-z0-9\\-]+", "-", s.lower()).strip("-")
+    except Exception:
+        return s
+
+
+def install_from_mapping(bindings: Dict[str, str]) -> Dict[str, int]:
+    """
+    Install/update shortcuts for arbitrary trigger aliases from a mapping:
+      { "alias": "<Ctrl><Alt>X", ... }
+    Command resolution:
+      - alias == "ui_show" -> "wbridge ui show"
+      - otherwise          -> "wbridge trigger <alias>"
+    Returns counts: {"installed": N, "skipped": M}
+    """
+    _ensure_gio()
+    installed = skipped = 0
+    for alias, binding in (bindings or {}).items():
+        try:
+            alias = str(alias or "").strip()
+            binding = str(binding or "").strip()
+            if not alias or not binding:
+                skipped += 1
+                continue
+            if alias == "ui_show":
+                name = "Bridge: Show UI"
+                cmd = "wbridge ui show"
+            else:
+                name = f"Bridge: {alias}"
+                cmd = f"wbridge trigger {alias}"
+            suffix = f"wbridge-{_slug(alias)}/"
+            install_binding(suffix, name, cmd, binding)
+            installed += 1
+        except Exception:
+            skipped += 1
+    return {"installed": installed, "skipped": skipped}
+
+
+def remove_all_wbridge_shortcuts() -> Dict[str, int]:
+    """
+    Remove all shortcuts whose custom-keybinding path suffix starts with 'wbridge-'.
+    Returns {"removed": N, "kept": M}.
+    """
+    _ensure_gio()
+    base = _get_base_settings()
+    paths = _get_paths(base)
+    kept: List[str] = []
+    removed = 0
+    for p in paths:
+        try:
+            if not isinstance(p, str):
+                kept.append(p)
+                continue
+            # Example path: /org/.../custom-keybindings/wbridge-foo/
+            if p.startswith(PATH_PREFIX + "wbridge-"):
+                removed += 1
+                continue
+            kept.append(p)
+        except Exception:
+            kept.append(p)
+    _set_paths(base, kept)
+    return {"removed": removed, "kept": len(kept)}
+
+
+# ---------------- V2 sync helpers ----------------
+
+def _suffix_for_alias(alias: str) -> str:
+    """
+    Deterministic custom-keybinding path suffix for an alias.
+    """
+    return f"wbridge-{_slug(alias)}/"
+
+
+def list_installed() -> List[Dict[str, str]]:
+    """
+    List all currently installed wbridge-specific custom keybindings.
+    Returns a list of dicts: { "name": str, "command": str, "binding": str, "suffix": str }.
+    """
+    _ensure_gio()
+    base = _get_base_settings()
+    paths = _get_paths(base)
+    out: List[Dict[str, str]] = []
+    for p in paths:
+        try:
+            if not isinstance(p, str):
+                continue
+            if not p.startswith(PATH_PREFIX):
+                continue
+            suffix = p[len(PATH_PREFIX):]
+            if not suffix.startswith("wbridge-"):
+                continue
+            custom = _custom_settings_for(p)
+            name = custom.get_string("name")
+            command = custom.get_string("command")
+            binding = custom.get_string("binding")
+            out.append({"name": name, "command": command, "binding": binding, "suffix": suffix})
+        except Exception:
+            # skip broken entry
+            continue
+    return out
+
+
+def sync_from_ini(settings_map: Dict[str, Dict[str, str]], auto_remove: bool = True) -> Dict[str, int]:
+    """
+    Synchronize GNOME custom shortcuts with the [gnome.shortcuts] section from settings.ini.
+    - Installs or updates entries for aliases in INI
+    - Optionally removes wbridge-* entries not present in INI (auto_remove=True)
+    Returns counts: {"installed": n, "updated": m, "removed": r, "skipped": s}
+    """
+    _ensure_gio()
+
+    # Extract desired mapping alias -> binding from settings_map["gnome.shortcuts"]
+    desired_section = {}
+    try:
+        if isinstance(settings_map, dict):
+            desired_section = dict(settings_map.get("gnome.shortcuts", {}) or {})
+    except Exception:
+        desired_section = {}
+
+    desired: Dict[str, str] = {}
+    for k, v in desired_section.items():
+        alias = str(k or "").strip()
+        binding = str(v or "").strip()
+        if alias and binding:
+            desired[alias] = binding
+
+    installed = updated = removed = skipped = 0
+
+    # Install or update desired entries
+    for alias, binding in desired.items():
+        try:
+            suffix = _suffix_for_alias(alias)
+            full_path = PATH_PREFIX + suffix
+            # Canonical name/command mapping
+            if alias == "ui_show":
+                name = "Bridge: Show UI"
+                cmd = "wbridge ui show"
+            else:
+                name = f"Bridge: {alias}"
+                cmd = f"wbridge trigger {alias}"
+
+            base = _get_base_settings()
+            paths = _get_paths(base)
+            if full_path in paths:
+                # Update binding/name/command if needed
+                try:
+                    custom = _custom_settings_for(full_path)
+                    changed = False
+                    if custom.get_string("binding") != binding:
+                        custom.set_string("binding", binding)
+                        changed = True
+                    try:
+                        if custom.get_string("name") != name:
+                            custom.set_string("name", name)
+                            changed = True
+                        if custom.get_string("command") != cmd:
+                            custom.set_string("command", cmd)
+                            changed = True
+                    except Exception:
+                        pass
+                    if changed:
+                        updated += 1
+                    else:
+                        skipped += 1
+                except Exception:
+                    # Fallback: install
+                    install_binding(suffix, name, cmd, binding)
+                    installed += 1
+            else:
+                # Fresh install
+                install_binding(suffix, name, cmd, binding)
+                installed += 1
+        except Exception:
+            skipped += 1
+
+    # Optionally remove entries that are no longer desired
+    if auto_remove:
+        desired_suffixes = {_suffix_for_alias(a) for a in desired.keys()}
+        base2 = _get_base_settings()
+        paths2 = _get_paths(base2)
+        for p in paths2:
+            try:
+                if not isinstance(p, str):
+                    continue
+                if not p.startswith(PATH_PREFIX + "wbridge-"):
+                    continue
+                suf = p[len(PATH_PREFIX):]
+                if suf not in desired_suffixes:
+                    remove_binding(suf)
+                    removed += 1
+            except Exception:
+                # ignore removal errors
+                pass
+
+    return {"installed": installed, "updated": updated, "removed": removed, "skipped": skipped}

@@ -1,0 +1,4 @@
+name = "obsidian-local-rest"
+version = "1.0.0"
+description = "Obsidian Local REST API integration"
+includes = ["actions.json", "shortcuts.json"]
