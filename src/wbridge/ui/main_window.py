@@ -38,7 +38,6 @@ from ..platform import active_env_summary, socket_path, xdg_state_dir, xdg_confi
 from ..config import (
     load_actions,
     load_settings,
-    set_integration_settings,
     load_actions_raw,
     write_actions_config,
     validate_action_dict,
@@ -2306,33 +2305,11 @@ class MainWindow(Gtk.ApplicationWindow):
             pass
 
     def _on_save_integration_clicked(self, _btn: Gtk.Button) -> None:
-        # Validate and persist integration fields atomically
+        # Legacy integration removed in V2. Settings live in Endpoints editor.
         try:
-            enabled = self.integ_enabled_switch.get_active()
-            base = self.integ_base_entry.get_text().strip()
-            path = self.integ_path_entry.get_text().strip()
-            # simple validations
-            if not base.startswith("http://") and not base.startswith("https://"):
-                self.settings_result.set_text(_("Invalid base URL (must start with http:// or https://)."))
-                return
-            if not path.startswith("/"):
-                self.settings_result.set_text(_("Invalid trigger path (must start with '/')."))
-                return
-            # write
-            set_integration_settings(
-                http_trigger_enabled=bool(enabled),
-                http_trigger_base_url=base,
-                http_trigger_trigger_path=path
-            )
-            try:
-                self._logger.info("settings.integration.save enabled=%s base=%s path=%s", bool(enabled), base, path)
-            except Exception:
-                pass
-            self.settings_result.set_text(_("Integration saved."))
-            # reload to reflect new state
-            self._reload_settings()
-        except Exception as e:
-            self.settings_result.set_text(_("Save failed: {err}").format(err=repr(e)))
+            self.settings_result.set_text(_("Legacy HTTP integration is no longer supported. Use Settings → Endpoints."))
+        except Exception:
+            pass
 
     def _on_discard_integration_clicked(self, _btn: Gtk.Button) -> None:
         # Discard local edits and re-populate from disk
@@ -2411,8 +2388,9 @@ class MainWindow(Gtk.ApplicationWindow):
             report = pm_install_profile(
                 pid,
                 overwrite_actions=bool(self.chk_overwrite_actions.get_active()),
-                patch_settings=bool(self.chk_patch_settings.get_active()),
-                install_shortcuts=bool(self.chk_install_shortcuts.get_active()),
+                merge_endpoints=bool(self.chk_patch_settings.get_active()),
+                merge_secrets=bool(self.chk_patch_settings.get_active()),
+                merge_shortcuts=bool(self.chk_install_shortcuts.get_active()),
                 dry_run=bool(self.chk_dry_run.get_active()),
             )
             # kompakte Zusammenfassung
@@ -2425,8 +2403,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 f"Install-Report (ok={report.get('ok')} dry_run={report.get('dry_run')}):\n"
                 f"- actions: added={acts.get('added',0)} updated={acts.get('updated',0)} skipped={acts.get('skipped',0)}\n"
                 f"- triggers: added={trigs.get('added',0)} updated={trigs.get('updated',0)} skipped={trigs.get('skipped',0)}\n"
-                f"- settings: patched={len(sets.get('patched',[]))} skipped={len(sets.get('skipped',[]))}\n"
-                f"- shortcuts: installed={sc.get('installed',0)} skipped={sc.get('skipped',0)}\n"
+                f"- settings: merged={len(sets.get('merged',[]))} skipped={len(sets.get('skipped',[]))}\n"
+                f"- shortcuts: merged={sc.get('merged',0)} skipped={sc.get('skipped',0)}\n"
                 f"- errors: {len(errors)}"
             )
             self.profile_result.set_text(txt)

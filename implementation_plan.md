@@ -1,156 +1,144 @@
 # Implementation Plan
 
 [Overview]
-UI-Optimierung für wbridge: vereinheitlichte, professionellere Layouts, bessere Hilfe-Darstellung, konsistente CTA-Position (unten) und Auto-Refresh im Status-Log.
+Harter Umstieg auf V2: settings.ini als Single Source of Truth (Endpoints, Secrets, GNOME‑Shortcuts); Entfernung aller [integration.*]‑Pfade in Code und UI; Endpoints‑/Shortcuts‑Editor und deterministische GNOME‑Sync aus [gnome.shortcuts].
 
-Die aktuelle UI zeigt auf mehreren Seiten lange Headertexte, gemischte Button-Positionen und inkonsistente Layouts (z. B. History in zwei Spalten). Dieser Plan räumt das auf: Wir reduzieren Kopfinformationen, bringen Hauptaktionen konsistent nach unten, stellen History vertikal dar (Clipboard und Primary untereinander), ordnen die Actions-Seite vertikal (Editor oben, Liste unten), und verbessern die Hilfe-Darstellung, sodass im eingeklappten Zustand kein Platz verbraucht wird. Zudem erhält die Status-Seite ein Follow/Auto-Refresh des Logs (standardmäßig an, 1 s Intervall). Die Änderungen bleiben innerhalb des bestehenden GTK4/PyGObject-Stacks ohne neue harte Abhängigkeiten und folgen DESIGN.md (Wayland-freundlich, wartbar, ohne Zusatz-Frameworks).
+Die aktuelle Codebasis verwendet noch [integration.*] (config.py DEFAULT_SETTINGS, SettingsPage‑Inline‑Edit, Health‑Check). V2 konsolidiert Konfiguration auf [endpoint.<id>], [secrets], [gnome], [gnome.shortcuts]. Aktionen nutzen Platzhalter {config.endpoint.<id>.*} und {config.secrets.*}. GNOME‑Shortcuts werden ausschließlich aus settings.ini gelesen und in dconf geschrieben (Auto‑Apply bei manage_shortcuts=true, sonst „Apply now“). Profile mergen Endpoints/Secrets/Shortcuts in die INI (kein direkter dconf‑Write). Altes [integration.*] wird konsequent entfernt; keine Migration.
 
 [Types]
-Leichte UI-Typen und Konfigurationskonstanten für konsistente Darstellung.
+Einführung des V2‑INI‑Schemas und Hilfstypen für Endpoints/Shortcuts.
 
-- HelpDisplayMode: Literal["revealer", "popover"] – steuert, wie Hilfe ein-/ausgeblendet wird (Standard "revealer").
-- RefreshConfig (Status): enabled: bool (default True), interval_ms: int (default 1000).
-- CTAPlacement: Literal["bottom"] – deklarativer Hinweis, Haupt-CTAs unten zu platzieren.
-- MarkdownRenderOptions: einfache Flags (headings_bold=True, bullets="• ").
+- INI‑Schema
+  - [endpoint.<id>]
+    - base_url: string; MUSS mit http:// oder https:// beginnen
+    - health_path: string; beginnt mit /; Default /health
+    - trigger_path: string; beginnt mit /; optional; Default /trigger
+    - <id>: slug ([a-z0-9_-]+), eindeutig
+  - [secrets]
+    - beliebige Key/Value (z. B. obsidian_token)
+  - [gnome]
+    - manage_shortcuts: bool (Default true)
+  - [gnome.shortcuts]
+    - alias → binding (z. B. prompt = <Ctrl><Alt>p)
+- Platzhalter
+  - {config.endpoint.<id>.base_url}, {config.endpoint.<id>.health_path}, {config.endpoint.<id>.trigger_path}
+  - {config.secrets.<key>}
+- Interne Hilfstypen (optional)
+  - dataclass Endpoint(id: str, base_url: str, health_path: str = "/health", trigger_path: str = "/trigger")
 
 [Files]
-Gezielte Änderungen an Seiten + kleine, wiederverwendbare Komponenten.
+Entfernung der alten Integrationspfade; neue Editor‑/Sync‑Funktionalität; keine Legacy‑Migration.
 
-New files:
-- src/wbridge/ui/components/markdown.py
-  - Zweck: Minimaler Markdown→Pango-Markup-Konverter (subset: #/##, Listen, Codeblöcke/inline, Fett/Kursiv), ohne externe Pakete. Fallback: Plaintext.
-  - API:
-    - def md_to_pango(md: str) -> str
-- src/wbridge/ui/components/page_header.py
-  - Zweck: Schlanker Page-Header-Builder mit Titel, optionaler Unterzeile (dim) und Help-Toggle (verknüpft mit Help-Revealer/Popover).
-  - API:
-    - def build_page_header(title: str, subtitle: str | None, help_widget: Gtk.Widget | None) -> Gtk.Widget
-- src/wbridge/ui/components/cta_bar.py
-  - Zweck: Einheitliche Bottom-Action-Bar (Container), in die pro Seite vorhandene Haupt-Buttons eingefügt werden.
-  - API:
-    - def build_cta_bar(*buttons: Gtk.Widget) -> Gtk.Widget
-
-Modified files:
-- src/wbridge/ui/components/help_panel.py
-  - Ersetzt Expander durch:
-    - Default: Gtk.Revealer (geschlossen: Höhe 0, kein Platzverbrauch), Button/Link in Header.
-    - Optional: Gtk.Popover (Anker am Help-Button), falls HelpDisplayMode="popover".
-  - Rendered Markdown: Nutzung markdown.md_to_pango, Anzeige als Gtk.Label(use_markup=True) in ScrolledWindow.
-  - Signatur: def build_help_panel(topic: str, mode: str = "revealer") -> Gtk.Widget
-- src/wbridge/ui/pages/history_page.py
-  - Layoutwechsel: Zwei-Spalten-Grid → eine Spalte (Clipboard-Sektion über Primary-Sektion).
-  - Headertext entfernen/verkürzen; Page-Header-Komponente verwenden.
-  - CTA unten: Refresh-Button in Bottom-Bar verschieben.
-  - Feinschliff: List-Höhen, Abstände, Zähler neben CTA oder als dim-Label.
-- src/wbridge/ui/pages/actions_page.py
-  - Layoutwechsel: Vertikal, Editor oben (Stack Form/JSON), Liste unten (scrollbar).
-  - Controls: Source-Auswahl bleibt oben; „Add Action“/„Reload actions“ in Bottom-CTA-Bar.
-  - Headertext reduzieren; Help über Revealer.
-- src/wbridge/ui/pages/triggers_page.py
-  - CTA unten: „Add Trigger“/„Save Triggers“ in Bottom-Bar.
-  - Kleinere Breite/Texteinzug optimieren, damit unnötiges Scrollen reduziert wird.
-- src/wbridge/ui/pages/shortcuts_page.py
-  - CTA unten: „Add“, „Save“, „Reload“ als Bottom-Bar.
-  - Header-Hinweise kompakt (dim).
-- src/wbridge/ui/pages/status_page.py
-  - Auto-Refresh („Follow log“) einbauen: Switch (default an), Intervall 1000 ms, Autoscroll ans Ende beim Refresh.
-  - Headertext kompakter; Help via Revealer.
-- src/wbridge/ui/main_window.py
-  - Falls erforderlich: Anpassung der Page-Konstruktion (z. B. kein eigener History/Actions-Headertext mehr).
-  - Keine Funktionsänderung am App-Flow.
-- src/wbridge/assets/style.css
-  - Neue Klassen:
-    - .page-header { margin-bottom: 8px; }
-    - .page-subtitle.dim { opacity: 0.6; }
-    - .cta-bar { margin-top: 8px; padding-top: 6px; border-top: 1px solid alpha(currentColor, 0.1); }
-    - .help-revealer scrolledwindow { min-height: 160px; }
-    - .mono { font-family: monospace; }
-  - Kleinere Button-/Label-Abstände konsistent halten.
-
-No-op/As-is:
-- src/wbridge/ui/pages/settings_page.py (CTAs sind hier eher Konfig-Kontrollen; nur Header/Help modernisieren).
+- Neue Dateien
+  - (Optional) src/wbridge/ui/components/endpoint_dialog.py – Dialog zum Hinzufügen/Bearbeiten eines Endpoints (ID, Base URL, Health/Trigger). Kann alternativ in settings_page.py inline implementiert werden.
+- Zu modifizierende Dateien
+  - src/wbridge/config.py
+    - Entferne DEFAULT_SETTINGS["integration"] vollständig.
+    - Entferne statische Binding‑Defaults in DEFAULT_SETTINGS["gnome"] (binding_prompt/command/ui_show).
+    - Neue Helpers:
+      - list_endpoints(settings: Settings) → Dict[str, Dict[str, str>]
+      - upsert_endpoint(id: str, base_url: str, health_path: str = "/health", trigger_path: str = "/trigger") → None
+      - delete_endpoint(id: str) → bool
+      - get_shortcuts_map(settings: Settings) → Dict[str, str]
+      - set_shortcuts_map(mapping: Dict[str, str]) → None
+      - set_manage_shortcuts(on: bool) → None
+    - expand_placeholders: beibehaltend; Dokumentation der {config.endpoint.*}/{config.secrets.*}‑Varianten.
+    - Entferne set_integration_settings(...) und sämtliche http_trigger_* Verwendungen.
+  - src/wbridge/ui/pages/settings_page.py
+    - Entferne kompletten „Integration status/Edit/Health“‑Block (Labels, Switch/Entries, Buttons, Handler).
+    - Implementiere:
+      - Endpoints‑Editor: Liste (ID | Base URL | Health | Trigger | [Health] [Edit] [Delete]) und [Add Endpoint].
+      - Shortcuts‑Editor (Config vs Installed): Tabelle alias | binding (editierbar); Status „Auto‑apply ON/OFF“; Buttons: Save (INI), Revert, Apply now (sichtbar wenn manage_shortcuts=false), Remove all.
+      - Health‑Button: urllib.request GET base_url + health_path mit 2s Timeout.
+      - Auf Save: Schreibvorgänge in settings.ini; wenn manage_shortcuts=true, sofort gnome_shortcuts.sync_from_ini(...)
+    - Entferne Verweise auf http_trigger_* und set_integration_settings.
+  - src/wbridge/gnome_shortcuts.py
+    - Ergänze:
+      - list_installed() → List[dict] mit {name, command, binding, suffix}
+      - sync_from_ini(settings_map: Dict[str, Dict[str, str]], auto_remove: bool = True) → Dict[str, int]  // {"installed": n, "updated": m, "removed": r, "skipped": s}
+    - Vereinheitliche Slug/Suffix (wbridge-<slug>/) mit bestehender _slug()/install_binding().
+    - Behalte install_recommended_shortcuts/remove_recommended_shortcuts als deprecated.
+  - src/wbridge/cli.py
+    - Subcommand „profile install“: Flags anpassen
+      - --overwrite-actions (bestehend)
+      - --merge-endpoints, --merge-secrets, --merge-shortcuts, --dry-run (ersetzen/ergänzen gegenüber --patch-settings/--install-shortcuts)
+    - Help/Output‑Texte auf „Merge in settings.ini“ umstellen, kein dconf‑Write.
+  - src/wbridge/profiles_manager.py
+    - Signatur install_profile(...) an neue Flags anpassen: merge_endpoints: bool, merge_secrets: bool, merge_shortcuts: bool (ersetzen patch_settings/install_shortcuts).
+    - Merge‑Whitelist (endpoint.*, secrets, gnome.shortcuts, optional gnome.manage_shortcuts) sicherstellen (bereits vorhanden).
+    - Report‑Keys/‑Texte: „merged/skipped“ konsistent; backups wie gehabt.
+  - src/wbridge/ui/pages/shortcuts_page.py
+    - Audit‑Ansicht: Tabelle Alias | ini.Binding | installed.Binding; Diff farblich; Buttons: Save (INI), Apply now, Remove all.
+  - src/wbridge/ui/main_window.py
+    - Entferne Gate/Disable‑Logik basierend auf integration.http_trigger_enabled (Actions immer benutzbar).
+- Zu löschen/verschieben
+  - In src/wbridge/config.py: Funktion set_integration_settings(...) entfernen.
+  - In src/wbridge/ui/pages/settings_page.py: Methoden _on_save_integration_clicked, _on_discard_integration_clicked, _on_health_check_clicked, _on_reload_settings_clicked und zugehörige UI‑Elemente entfernen/ersetzen.
 
 [Functions]
-Neue Builder-Funktionen und gezielte UI-Umbauten.
+Ziel: neue V2‑Helpers hinzufügen und alte Integrationsfunktionen entfernen.
 
-New functions:
-- src/wbridge/ui/components/markdown.py
-  - md_to_pango(text: str) -> str
-- src/wbridge/ui/components/page_header.py
-  - build_page_header(title: str, subtitle: str | None, help_widget: Gtk.Widget | None) -> Gtk.Widget
-- src/wbridge/ui/components/cta_bar.py
-  - build_cta_bar(*buttons: Gtk.Widget) -> Gtk.Widget
-- src/wbridge/ui/components/help_panel.py
-  - build_help_panel(topic: str, mode: str = "revealer") -> Gtk.Widget
-  - _render_help_pango(text: str) -> Gtk.Widget  (intern)
-
-Modified functions (Auswahl, exakte Signatur erhalten):
-- HistoryPage.__init__:
-  - Entfernt grid (zwei Spalten), erstellt vertical layout mit zwei Frames in Reihenfolge: Clipboard → Primary.
-  - Ersetzt top „history_desc“-Label durch page_header.build_page_header(...).
-  - Verschiebt Refresh-Button in cta_bar.build_cta_bar(refresh_btn).
-- HistoryPage.refresh / update_current_labels_async / _build_history_row:
-  - Logik unverändert; nur Widgets gehören nun zum neuen Layout.
-- ActionsPage.__init__:
-  - Container md (horizontal) → vertical; Editorbereich (Stack/Form/JSON) vor die Liste.
-  - „Add Action“/„Reload actions“ in CTA-Bar unten, Run/Save/Cancel/Delete bleiben innerhalb des Editors, aber Page-CTA (Add/Reload) stets unten.
-  - Headertext gestrafft, help_panel mode="revealer".
-- TriggersPage.__init__:
-  - Buttons in Bottom-CTA.
-- ShortcutsPage.__init__:
-  - Buttons in Bottom-CTA.
-- StatusPage.__init__:
-  - „Follow log“ Switch (aktiviert GLib.timeout_add_seconds(1, ...)).
-  - Autoscroll: Buffer an das Ende setzen bei Refresh.
-  - Manuelle „Refresh“-Aktion bleibt zusätzlich verfügbar.
-- StatusPage.refresh_log_tail(max_lines=200) → ergänzt Autoscroll bei Follow.
-- help_panel._load_help_text / _render_help → ersetzt TextView durch Label(use_markup=True) + Scroll, und Revealer/Popover-Logik.
-
-Removed/relocated:
-- Lange Seitenkopf-Labels mit Bullet-„Tipps“ entfallen (duplizierte Hilfe).
+- Neu
+  - config.py
+    - def list_endpoints(settings: Settings) → Dict[str, Dict[str, str]]
+    - def upsert_endpoint(id: str, base_url: str, health_path: str = "/health", trigger_path: str = "/trigger") → None
+    - def delete_endpoint(id: str) → bool
+    - def get_shortcuts_map(settings: Settings) → Dict[str, str]
+    - def set_shortcuts_map(mapping: Dict[str, str]) → None
+    - def set_manage_shortcuts(on: bool) → None
+  - gnome_shortcuts.py
+    - def list_installed() → List[dict]
+    - def sync_from_ini(settings_map: Dict[str, Dict[str, str]], auto_remove: bool = True) → Dict[str, int]
+  - settings_page.py
+    - def on_endpoint_add/edit/delete(self, …) → None
+    - def on_endpoint_health_check(self, endpoint_id: str) → None
+    - def on_shortcuts_save(self, mapping: Dict[str, str]) → None
+    - def on_shortcuts_apply_now(self) → None
+- Modifiziert
+  - config.py: DEFAULT_SETTINGS ohne „integration.*“ und ohne statische „binding_*“; expand_placeholders unverändert nutzbar.
+  - profiles_manager.py: install_profile Parameter/Reportnamen an neue Flags; intern _merge_shortcuts_section/_merge_shortcuts_from_items bleiben.
+  - cli.py: build_parser(), cmd_profile_install() Flag‑Mapping und Messages.
+- Entfernt
+  - config.py: set_integration_settings(...)
+  - settings_page.py: alle Handler/UI‑Elemente zu http_trigger_*
 
 [Classes]
-Keine neuen komplexen Klassen erforderlich; Builder-Funktionen genügen.
+Keine neuen Kernklassen; optionale interne Dataclasses.
 
-- New classes: keine (nur Funktions-Builder in components/*).
-- Modified classes:
-  - HistoryPage, ActionsPage, TriggersPage, ShortcutsPage, StatusPage: Layoutstruktur und CTA-Positionierung.
-- Removed classes: keine.
+- Neu
+  - (Optional) dataclass Endpoint in config.py für Validierung/Hilfen.
+- Modifiziert
+  - Settings unverändert (get/getint/getboolean/as_mapping).
+- Entfernt
+  - Keine Klassenentfernung erforderlich.
 
 [Dependencies]
-Keine neuen harten Abhängigkeiten.
-
-- Optional (zukünftig): markdown / markdown2 als extra; wird hier nicht vorausgesetzt.
-- pyproject.toml bleibt unverändert.
+Keine neuen Pflicht‑Abhängigkeiten; optional bleibt requests für HTTP‑Aktionen erhalten.
 
 [Testing]
-Visuelle und funktionale UI-Checks.
+Testansatz: Unit für Merge/Helpers; Smoke/E2E für UI und GNOME‑Sync.
 
-- Start: wbridge-app
-- History:
-  - Clipboard/Primary erscheinen untereinander; Einträge/Buttons funktionieren.
-  - Refresh-CTA unten sichtbar, Zähler korrekt.
-- Actions:
-  - Editor oben, Liste unten; „Add Action“/„Reload actions“ unten (CTA-Bar).
-  - Run/Save/Cancel/Delete funktionieren wie gehabt.
-- Triggers:
-  - Add/Save unten; Mapping validiert; keine unnötigen Scrolls.
-- Shortcuts:
-  - Add/Save/Reload unten; Konflikt-Hinweis weiterhin sichtbar.
-- Help:
-  - Offen: gerendertes Markdown (Überschriften fett, Listen mit •).
-  - Geschlossen: kein zusätzlicher Leerraum; Umschalten ohne Sprünge.
-- Status:
-  - Follow aktiviert (default an), aktualisiert ca. 1/s, autoscroll ans Ende.
+- Unit
+  - profiles_manager: Merge endpoint.*, secrets, gnome.shortcuts; Flags merge_*; overwrite_actions True/False
+  - gnome_shortcuts: _slug, list_installed, sync_from_ini(auto_remove), remove_all_wbridge_shortcuts
+  - config.py: upsert/delete_endpoint, set_shortcuts_map, set_manage_shortcuts
+- E2E (manuell)
+  - Profile obsidian/witsy installieren (dry‑run, dann merge); INI prüfen
+  - manage_shortcuts=true: Save → Shortcuts erscheinen in GNOME
+  - manage_shortcuts=false: Save ändert nur INI; Apply now synchronisiert
+  - Endpoints‑Health‑Check Button → OK/Fehler wie erwartet
+- UX
+  - Settings‑Endpoints: Add/Edit/Delete, Health
+  - Shortcuts‑Editor: Config vs Installed Diff
 
 [Implementation Order]
-Schrittweise, risikoarm.
+Schrittweise, konfliktarm: Core → Shortcuts‑Sync → Profile/CLI → UI → Doku → Cleanup.
 
-1) Komponenten vorbereiten: markdown.py, help_panel.py umbauen (Revealer + Markdown-Render).
-2) HistoryPage vertikal umbauen; CTA-Bar unten; Header entschlacken.
-3) ActionsPage vertikal (Editor oben, Liste unten); Page-CTA unten.
-4) TriggersPage und ShortcutsPage: CTA nach unten, Kopf vereinfacht.
-5) StatusPage: Follow/Auto-Refresh + Autoscroll; Kopf/Help modernisieren.
-6) CSS finalisieren (Header/CTA/Help-Klassen).
-7) Manuelle Tests (alle Seiten); Feinjustage von Abständen.
-8) Cleanup: Entfernte Kopf-Labels prüfen, tote IDs entfernen, Logging-Meldungen bestätigen.
+1) config.py: DEFAULTS bereinigen; neue INI‑Helpers (endpoints/shortcuts/manage_shortcuts); set_integration_settings entfernen
+2) gnome_shortcuts.py: list_installed, sync_from_ini; Suffix‑Logik vereinheitlichen
+3) profiles_manager.py: Flags/Reports auf merge_endpoints/merge_secrets/merge_shortcuts umstellen
+4) cli.py: Parser/Help/Report‑Texte aktualisieren
+5) UI SettingsPage: Endpoints‑Editor + Shortcuts‑Editor, Auto‑apply, Remove all, Health; Status „Auto‑apply ON/OFF“
+6) UI ShortcutsPage: Audit‑Ansicht (Diff) + Buttons
+7) Doku: help/en/settings.md, help/en/shortcuts.md, help/en/actions.md aktualisieren
+8) Cleanup/Smoke/E2E: Entferne restliche [integration.*]‑Referenzen; manuelle Prüfung aller Flows

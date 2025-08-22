@@ -6,6 +6,11 @@ Wayland‑friendly selection and shortcut bridge for GNOME desktops. Mark text, 
 - CLI entry: `wbridge` (talks to the running app via Unix domain socket)
 - No wl‑clipboard, no hidden headless mode, no tray. GNOME Custom Shortcuts trigger the CLI.
 
+Configuration model (V2)
+- settings.ini is the Single Source of Truth for Endpoints, Secrets, and GNOME Shortcuts (hard switch; no legacy `[integration.*]`).
+- Actions use placeholders like `{config.endpoint.<id>.*}` and `{config.secrets.<key>}`.
+- Shortcuts sync deterministically from `[gnome.shortcuts]` (Auto‑apply or Apply now).
+
 ---
 
 ## What problem does wbridge solve?
@@ -87,21 +92,57 @@ Troubleshooting install
 
 ---
 
+## Quick config (V2)
+
+All configuration lives in `~/.config/wbridge/settings.ini`.
+
+Example:
+```
+[general]
+history_max = 50
+poll_interval_ms = 300
+
+[endpoint.local]
+base_url = http://127.0.0.1:8808
+health_path = /health
+trigger_path = /trigger
+
+[secrets]
+obsidian_token = YOUR_TOKEN
+
+[gnome]
+manage_shortcuts = true
+
+[gnome.shortcuts]
+prompt  = <Ctrl><Alt>p
+command = <Ctrl><Alt>m
+ui_show = <Ctrl><Alt>u
+```
+
+- Endpoints: define base URL and paths; use per-row “Health” in Settings → Endpoints to probe `base_url + health_path` (2 s timeout).
+- Secrets: user‑managed key/value store. Reference via `{config.secrets.<key>}` in actions.
+- GNOME Shortcuts: edit `[gnome.shortcuts]` mapping in Settings; Auto‑apply toggles immediate sync; otherwise click “Apply now”.
+
+Placeholders in actions:
+- `{config.endpoint.local.base_url}`, `{config.endpoint.local.trigger_path}`, …
+- `{config.secrets.obsidian_token}`
+- plus common `{text}`, `{text_url}`, `{selection.type}`.
+
+---
+
 ## First steps (2 minutes)
 
 1) Open the GUI (`wbridge-app` or `wbridge ui show`).
 2) Go to Actions → Add Action.
    - Type: `http`
    - Method: `POST`
-   - URL: `http://localhost:8808/ingest`
+   - URL: `{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}`
    - Use `{text}` in your body or parameters if needed (see placeholders below).
    - Save.
 3) Go to Triggers → add alias `ingest` → select your new action → Save.
-4) Go to Settings → Install GNOME Shortcuts (recommended).
-   - Example defaults:
-     - Prompt: `<Ctrl><Alt>p`
-     - Command: `<Ctrl><Alt>m`
-     - Show UI: `<Ctrl><Alt>u`
+4) Go to Settings:
+   - Endpoints: add `local` if needed, probe Health.
+   - Shortcuts (Config): set bindings; Auto‑apply ON to sync or OFF + “Apply now”.
 5) Select some text in any app, then run:
    ```
    wbridge trigger ingest --from-primary
@@ -118,11 +159,11 @@ Tip: Use the Status page to watch logs while testing.
   - Clipboard: regular copy/paste buffer (Ctrl+C / Ctrl+V).
   - Primary Selection: mouse‑selection buffer, often pasted via middle‑click. You can keep two parallel buffers.
 - Actions: reusable units you run on the current selection. Types:
-  - HTTP (GET/POST, headers/body). Example placeholder: `{text}`, `{text_url}`, `{selection.type}`.
+  - HTTP (GET/POST, headers/body). Example placeholders: `{text}`, `{text_url}`, `{selection.type}`, `{config.endpoint.<id>.*}`, `{config.secrets.*}`.
   - Shell (exec program with args). Use “Use shell” only if you need pipes/globs.
 - Triggers: map a short alias (e.g., `translate`) to an action name. Use aliases in CLI/HTTP.
 - GNOME Custom Shortcuts: system keybindings that run commands like `wbridge trigger translate --from-clipboard`.
-- Profiles: curated presets (actions, triggers, settings patches, shortcuts) you can install.
+- Profiles: curated presets (actions, triggers, optional settings patches, shortcuts) you can merge into your config.
 
 ---
 
@@ -131,12 +172,12 @@ Tip: Use the Status page to watch logs while testing.
 - HTTP
   - POST selected text:
     ```
-    POST http://localhost:8808/ingest
+    POST {config.endpoint.local.base_url}{config.endpoint.local.trigger_path}
     Body: {"text":"{text}","source":"{selection.type}"}
     ```
   - GET with query:
     ```
-    GET http://localhost:8808/search?q={text_url}
+    GET {config.endpoint.local.base_url}/search?q={text_url}
     ```
 - Shell
   - Uppercase:
@@ -157,7 +198,7 @@ Tip: Use the Status page to watch logs while testing.
 
 ---
 
-## Profiles (example: “witsy”)
+## Profiles (example: “witsy” / “obsidian-local-rest”)
 
 List/show:
 ```
@@ -165,20 +206,22 @@ wbridge profile list
 wbridge profile show --name witsy
 ```
 
-Install:
+Install (V2 merge flags):
 ```
 # Dry‑run (preview)
 wbridge profile install --name witsy --dry-run
 
-# Install with overwrite/patch and recommended shortcuts
-wbridge profile install --name witsy --overwrite-actions --patch-settings --install-shortcuts
+# Merge into settings.ini/actions.json
+wbridge profile install --name witsy \
+  --overwrite-actions \
+  --merge-endpoints \
+  --merge-secrets \
+  --merge-shortcuts
 ```
 
-What profiles can do
-- Provide ready‑made actions/triggers.
-- Patch integration settings (HTTP trigger).
-- Install GNOME shortcuts.  
-Use the Settings page → Health check to verify local HTTP availability.
+Notes
+- Profiles do not ship your personal tokens. Put tokens in `[secrets]` and reference them via `{config.secrets.<key>}`.
+- There is no direct dconf write in profile install; GNOME shortcuts are synced from INI via the app.
 
 ---
 
@@ -188,18 +231,24 @@ Use the Settings page → Health check to verify local HTTP availability.
 - Local IPC over Unix domain socket (`0600`) in `$XDG_RUNTIME_DIR`.
 - Actions are explicit. HTTP endpoints and Shell commands are under your control.
 - Be mindful when enabling “Use shell” or calling external endpoints.
+- Secrets live in `~/.config/wbridge/settings.ini` under `[secrets]` (user‑managed).
 
 ---
 
 ## Troubleshooting
 
+- Endpoint not reachable
+  - Settings → Endpoints: use “Health” on the row to test `base_url + health_path`.
+  - Check the Status page for logs (timeouts, connection errors).
+
+- Shortcuts didn’t sync
+  - If Auto‑apply is OFF, use “Apply now” in Settings → Shortcuts (Config).
+  - Ensure `wbridge` is on PATH or use an absolute command path in GNOME shortcuts.
+
 - `wbridge` not found in PATH
   - Use pipx with `--system-site-packages`.
-  - Ensure `~/.local/bin` is in PATH or use absolute command path in GNOME shortcuts.
-- “No module named 'gi'”
-  - Install distro packages for GTK4/PyGObject; reinstall via pipx with system site packages.
-- HTTP actions disabled
-  - Enable the HTTP trigger in Settings; run Health check; watch the Status log.
+  - Ensure `~/.local/bin` is in PATH or use an absolute command in GNOME Shortcuts.
+
 - Start GUI from a source checkout
   ```
   PYTHONPATH=src python3 -m wbridge.app
@@ -213,8 +262,8 @@ Each GUI page includes contextual help:
 - History: dual buffers, apply/swap, refresh
 - Actions: master/detail editor, run/save/duplicate/delete, placeholders
 - Triggers: alias → action mapping
-- Shortcuts: manage GNOME keybindings (wbridge scope)
-- Settings: integration status; inline edit; health check; profiles; shortcuts/autostart
+- Shortcuts: audit INI vs Installed, Apply now, Remove all
+- Settings: Endpoints, Secrets, Shortcuts (INI), Profiles, Autostart
 - Status: environment info + log tail
 
 Sources: `src/wbridge/help/en/{history,actions,triggers,shortcuts,settings,status}.md`
@@ -246,6 +295,8 @@ src/
       main_window.py
       components/
         help_panel.py
+        cta_bar.py
+        markdown.py
       pages/
         history_page.py
         actions_page.py
@@ -257,18 +308,18 @@ src/
     server_ipc.py        # Unix domain socket server (NDJSON)
     history.py           # History store and APIs
     actions.py           # Actions (HTTP/Shell), placeholders
-    config.py            # settings.ini + actions.json I/O; atomic writes; validation
+    config.py            # settings.ini + actions.json I/O + V2 helpers (endpoints/secrets/shortcuts)
     platform.py          # paths; env; app info
-    gnome_shortcuts.py   # GNOME keybindings install/update/remove
+    gnome_shortcuts.py   # GNOME keybindings install/update/remove + V2 sync
     autostart.py         # desktop autostart mgmt
     logging_setup.py     # file + console logger
-    profiles_manager.py  # profiles (list/show/install)
+    profiles_manager.py  # profiles (list/show/install) with merge_* flags
     profiles/            # built‑in profiles
     help/en/*.md         # per‑page Help content
     assets/style.css     # CSS
 ```
 
 Design & docs
-- Design specification: [DESIGN.md](DESIGN.md)
+- Design specification (V2): [DESIGN.md](DESIGN.md)
 - Changelog: [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
 - License: MIT (see [LICENSE](LICENSE))

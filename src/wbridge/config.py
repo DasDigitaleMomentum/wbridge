@@ -28,17 +28,8 @@ DEFAULT_SETTINGS = {
         "history_max": "50",
         "poll_interval_ms": "300",
     },
-    "integration": {
-        "http_trigger_enabled": "false",
-        "http_trigger_base_url": "http://127.0.0.1:18081",
-        "http_trigger_health_path": "/health",
-        "http_trigger_trigger_path": "/trigger",
-    },
     "gnome": {
         "manage_shortcuts": "true",
-        "binding_prompt": "<Ctrl><Alt>p",
-        "binding_command": "<Ctrl><Alt>m",
-        "binding_ui_show": "<Ctrl><Alt>u",
     },
 }
 
@@ -220,6 +211,12 @@ def validate_action_dict(action: Dict[str, Any]) -> tuple[bool, str]:
             v = action.get(k)
             if v is not None and not isinstance(v, (dict, list, str)):
                 return False, f"http action.{k} must be object/array/string"
+        # optional minimal engine feature: plain text body
+        if "body_is_text" in action and not isinstance(action.get("body_is_text"), bool):
+            return False, "http action.body_is_text must be boolean"
+        # mutual exclusivity: POST with body_is_text cannot also specify json
+        if method == "POST" and bool(action.get("body_is_text")) and action.get("json") is not None:
+            return False, "http action.body_is_text is mutually exclusive with json for POST"
     else:
         cmd = str(action.get("command") or "").strip()
         if not cmd:
@@ -267,12 +264,9 @@ def _write_ini_atomic(parser: configparser.ConfigParser, path: Path) -> None:
     os.replace(tmpname, path)
 
 
-def set_integration_settings(*, http_trigger_enabled: Optional[bool] = None,
-                             http_trigger_base_url: Optional[str] = None,
-                             http_trigger_trigger_path: Optional[str] = None,
-                             http_trigger_health_path: Optional[str] = None) -> None:
+def _load_settings_parser_with_defaults() -> tuple[configparser.ConfigParser, Path]:
     """
-    Update whitelisted keys in [integration] atomically. Any None value will be left unchanged.
+    Internal helper: load settings.ini with DEFAULT_SETTINGS preloaded.
     """
     ensure_dirs()
     cfg_dir = xdg_config_dir()
@@ -292,17 +286,134 @@ def set_integration_settings(*, http_trigger_enabled: Optional[bool] = None,
             # continue with defaults
             pass
 
-    if not parser.has_section("integration"):
-        parser.add_section("integration")
+    return parser, ini_path
 
-    def _set_if_not_none(key: str, value: Optional[str]) -> None:
-        if value is not None:
-            parser.set("integration", key, value)
 
-    if http_trigger_enabled is not None:
-        parser.set("integration", "http_trigger_enabled", "true" if http_trigger_enabled else "false")
-    _set_if_not_none("http_trigger_base_url", http_trigger_base_url)
-    _set_if_not_none("http_trigger_trigger_path", http_trigger_trigger_path)
-    _set_if_not_none("http_trigger_health_path", http_trigger_health_path)
+# --------- V2 INI helpers: endpoints and shortcuts ---------
 
+def list_endpoints(settings: Settings) -> Dict[str, Dict[str, str]]:
+    """
+    Collect endpoints from settings into a mapping:
+      {
+        "<id>": {
+          "base_url": "...",
+          "health_path": "...",
+          "trigger_path": "..."
+        }
+      }
+    """
+    result: Dict[str, Dict[str, str]] = {}
+    for section in settings.config.sections():
+        if section.startswith("endpoint."):
+            id_ = section.split(".", 1)[1]
+            kv: Dict[str, str] = {
+                "base_url": settings.get(section, "base_url", fallback=""),
+                "health_path": settings.get(section, "health_path", fallback="/health"),
+                "trigger_path": settings.get(section, "trigger_path", fallback="/trigger"),
+            }
+            result[id_] = kv
+    return result
+
+
+def upsert_endpoint(id: str, base_url: str, health_path: str = "/health", trigger_path: str = "/trigger") -> None:
+    """
+    Create or update [endpoint.<id>] with provided values. Minimal validation applied.
+    """
+    if not id or any(c for c in id if c not in "abcdefghijklmnopqrstuvwxyz0123456789_-"):
+        raise ValueError("endpoint id must be a slug [a-z0-9_-]+")
+    if not base_url.startswith(("http://", "https://")):
+        raise ValueError("base_url must start with http:// or https://")
+    if not health_path.startswith("/"):
+        raise ValueError("health_path must start with '/'")
+    if not trigger_path.startswith("/"):
+        raise ValueError("trigger_path must start with '/'")
+
+    parser, ini_path = _load_settings_parser_with_defaults()
+    section = f"endpoint.{id}"
+    if not parser.has_section(section):
+        parser.add_section(section)
+    parser.set(section, "base_url", base_url)
+    parser.set(section, "health_path", health_path or "/health")
+    parser.set(section, "trigger_path", trigger_path or "/trigger")
+    _write_ini_atomic(parser, ini_path)
+
+
+def delete_endpoint(id: str) -> bool:
+    """
+    Delete [endpoint.<id>] section if present. Returns True if removed.
+    """
+    parser, ini_path = _load_settings_parser_with_defaults()
+    section = f"endpoint.{id}"
+    if parser.has_section(section):
+        parser.remove_section(section)
+        _write_ini_atomic(parser, ini_path)
+        return True
+    return False
+
+
+def get_shortcuts_map(settings: Settings) -> Dict[str, str]:
+    """
+    Read [gnome.shortcuts] as alias -> binding mapping.
+    """
+    mapping: Dict[str, str] = {}
+    section = "gnome.shortcuts"
+    if settings.config.has_section(section):
+        for k, v in settings.config.items(section):
+            mapping[k] = v
+    return mapping
+
+
+def set_shortcuts_map(mapping: Dict[str, str]) -> None:
+    """
+    Overwrite [gnome.shortcuts] with the provided alias -> binding pairs.
+    """
+    parser, ini_path = _load_settings_parser_with_defaults()
+    section = "gnome.shortcuts"
+    if parser.has_section(section):
+        parser.remove_section(section)
+    parser.add_section(section)
+    for alias, binding in mapping.items():
+        parser.set(section, str(alias), str(binding))
+    _write_ini_atomic(parser, ini_path)
+
+
+def set_manage_shortcuts(on: bool) -> None:
+    """
+    Set [gnome].manage_shortcuts = true/false.
+    """
+    parser, ini_path = _load_settings_parser_with_defaults()
+    if not parser.has_section("gnome"):
+        parser.add_section("gnome")
+    parser.set("gnome", "manage_shortcuts", "true" if on else "false")
+    _write_ini_atomic(parser, ini_path)
+
+
+# --------- V2 INI helpers: secrets ---------
+
+def get_secrets_map(settings: Settings) -> Dict[str, str]:
+    """
+    Read [secrets] as key -> value mapping.
+    """
+    mapping: Dict[str, str] = {}
+    section = "secrets"
+    try:
+        if settings.config.has_section(section):
+            for k, v in settings.config.items(section):
+                mapping[k] = v
+    except Exception:
+        pass
+    return mapping
+
+
+def set_secrets_map(mapping: Dict[str, str]) -> None:
+    """
+    Overwrite [secrets] with the provided key -> value pairs.
+    """
+    parser, ini_path = _load_settings_parser_with_defaults()
+    section = "secrets"
+    if parser.has_section(section):
+        parser.remove_section(section)
+    parser.add_section(section)
+    for k, v in (mapping or {}).items():
+        parser.set(section, str(k), str(v))
     _write_ini_atomic(parser, ini_path)

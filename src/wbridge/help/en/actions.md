@@ -25,7 +25,7 @@ What’s on this page
 - Placeholders: Variables you can reference in actions, resolved at runtime:
   - `{text}`, `{text_url}`, `{selection.type}`
   - `{history[0]}`, `{history[1]}`, …
-  - `{app.name}`, `{now.iso}`, and optionally config references like `{config.section.key}`
+  - `{app.name}`, `{now.iso}`, and config references like `{config.section.key}`
 - Result area: Shows success/failure and response snippets after running an action.
 
 ---
@@ -37,7 +37,7 @@ What’s on this page
 3) Edit the Action (Form tab recommended; JSON tab for advanced fields).
 4) Save changes (writes to `~/.config/wbridge/actions.json`, with a backup).
 5) Run the Action.
-6) Inspect results; optionally apply output back to Clipboard/Primary (planned option).
+6) Inspect results.
 
 ---
 
@@ -66,34 +66,33 @@ What’s on this page
 5) Run
    - Click “Run” to execute the selected action with the chosen source
    - See the result area for status and output
-   - If HTTP integration is disabled, running HTTP actions may be unavailable. Enable it in Settings.
 
 ---
 
 ## Examples
 
-HTTP – POST selected text
+HTTP – POST selected text (with placeholders from settings.ini)
 - Goal: Send the current selection as JSON to a local API
 - Form (minimum):
   - Type: `http`
   - Method: `POST`
-  - URL: `http://localhost:8808/ingest`
+  - URL: `{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}`
 - JSON (body via advanced field in JSON tab):
   ```json
   {
     "name": "Post to local API",
     "type": "http",
     "method": "POST",
-    "url": "http://localhost:8808/ingest",
+    "url": "{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}",
     "headers": { "Content-Type": "application/json" },
-    "body": { "text": "{text}", "source": "{selection.type}" }
+    "json": { "text": "{text}", "source": "{selection.type}" }
   }
   ```
 
 HTTP – GET with query
 - Use URL placeholders directly:
   ```
-  http://localhost:8808/search?q={text_url}
+  {config.endpoint.local.base_url}/search?q={text_url}
   ```
 
 Shell – Uppercase
@@ -118,10 +117,34 @@ Shell – URL‑encode via Python
 }
 ```
 
+Obsidian – Local REST API token (from [secrets])
+- Goal: Append the current selection as plain text to a file in your Obsidian vault via the Local REST API plugin.
+- Action JSON (add via the JSON tab):
+```json
+{
+  "name": "Obsidian: Append to Inbox.md",
+  "type": "http",
+  "method": "POST",
+  "url": "http://127.0.0.1:27124/vault/Inbox.md",
+  "headers": {
+    "Authorization": "Bearer {config.secrets.obsidian_token}",
+    "Content-Type": "text/markdown"
+  },
+  "body_is_text": true
+}
+```
+- Notes on body_is_text:
+  - Optional boolean. When true and method is POST and neither `json` nor `data` is set, the raw `{text}` is sent as the request body.
+  - Ignored for GET.
+  - Mutually exclusive with `json` for POST.
+  - If `data` is present, it takes precedence over `body_is_text`.
+
 Tips for placeholders
 - `{text}`: raw input text
 - `{text_url}`: URL‑encoded input text
 - `{selection.type}`: `"clipboard"` or `"primary"`
+- `{config.endpoint.<id>.*}`: values from settings.ini
+- `{config.secrets.<key>}`: secret values from settings.ini
 
 ---
 
@@ -148,10 +171,9 @@ Tips for placeholders
 
 ## Troubleshooting
 
-Run disabled or failing
-- Enable HTTP trigger in Settings if you rely on HTTP actions.
+Run failing
 - Check the Status page for logs (requests, errors).
-- Confirm the endpoint is reachable (Settings → Health check).
+- Confirm the endpoint is reachable (use Endpoints Health in Settings).
 
 Validation failures
 - Name must be non‑empty and unique.
@@ -169,11 +191,11 @@ Unexpected action behavior
 - Clipboard: regular copy/paste buffer (Ctrl+C / Ctrl+V)
 - Primary Selection: mouse selection buffer (often middle‑click paste)
 - Triggers: alias → action mapping for easier invocation
-- Shortcuts: GNOME global keybindings that run `wbridge` CLI commands
+- Shortcuts: GNOME keybindings that run `wbridge` commands
 
 Related pages:
 - Triggers: `help/en/triggers.md`
-- Settings (HTTP trigger, profiles, shortcuts): `help/en/settings.md`
+- Settings (Endpoints, Shortcuts, Profiles): `help/en/settings.md`
 - History (apply/swap): `help/en/history.md`
 - Shortcuts (GNOME custom keybindings): `help/en/shortcuts.md`
 - Status (logs): `help/en/status.md`
