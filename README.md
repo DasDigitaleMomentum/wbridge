@@ -1,26 +1,27 @@
 # wbridge
 
-Wayland‑friendly selection and shortcut bridge for GNOME desktops. Mark text, press a shortcut, run an action (HTTP or Shell) — without global key grabs.
+Wayland‑friendly selection and shortcut bridge for GNOME. Mark text. Press a shortcut. Run an action (HTTP or Shell) — without global key grabs.
 
-- GUI entry: `wbridge-app` (GTK4 application: History, Actions, Triggers, Shortcuts, Settings, Status)
-- CLI entry: `wbridge` (talks to the running app via Unix domain socket)
-- No wl‑clipboard, no hidden headless mode, no tray. GNOME Custom Shortcuts trigger the CLI.
+- Benefits
+  - Wayland-safe: no global key grabs, no key injection, no wl‑clipboard dependency
+  - Native GNOME: Custom Shortcuts invoke the CLI; the GTK4 app does selection + actions
+  - Fast workflows: one shortcut from selection to result, visible in a native UI
+  - Open and configurable: simple INI/JSON with powerful placeholders and profiles
 
-Configuration model (V2)
-- settings.ini is the Single Source of Truth for Endpoints, Secrets, and GNOME Shortcuts (hard switch; no legacy `[integration.*]`).
-- Actions use placeholders like `{config.endpoint.<id>.*}` and `{config.secrets.<key>}`.
-- Shortcuts sync deterministically from `[gnome.shortcuts]` (Auto‑apply or Apply now).
+- Entries
+  - GUI: `wbridge-app` (GTK4 application: History, Actions, Triggers, Shortcuts, Settings, Status)
+  - CLI: `wbridge` (talks to the running app via Unix domain socket)
 
 ---
 
-## What problem does wbridge solve?
+## Why wbridge? What problems does it solve?
 
-On Wayland, apps cannot reliably grab global shortcuts or inject keystrokes. Yet power users want: “Take my current selection, send it to a tool, and get a result back — quickly.”  
-wbridge provides a safe, robust path:
+Wayland limits global hotkeys and key injection. Power users still want: “Take my current selection, send it to a tool, and get the result back — quickly.”
 
-- GNOME manages global keybindings.
+wbridge provides a robust, Wayland‑friendly path:
+- GNOME manages global keybindings (Custom Shortcuts).
 - Keybindings execute `wbridge ...` with parameters.
-- A running GTK4 app reads your current Clipboard or Primary Selection, then runs a configurable action (HTTP or Shell) with placeholders.
+- A running GTK4 app reads your Clipboard or Primary Selection and runs a configured action (HTTP or Shell) with placeholders.
 - You keep full control and visibility in a native GTK UI.
 
 Typical uses
@@ -31,36 +32,29 @@ Typical uses
 
 ---
 
-## How it works in 30 seconds
-
-1) Select text (Clipboard via Ctrl+C or Primary Selection via mouse).
-2) Press a GNOME shortcut (e.g., Ctrl+Alt+P) that runs a `wbridge` CLI command.
-3) The app reads the selection and executes the configured action (HTTP or Shell).  
-   You see results in the UI (and optionally re‑apply to the Clipboard/Primary).
-
-Flow
-```
-[GNOME Shortcut] → runs → [wbridge CLI] → IPC → [wbridge GTK App]
-                                       → reads selection → runs action → logs/result
-```
-
----
-
-## Install (for users)
+## Quick start (60–120 seconds)
 
 1) Install system packages (PyGObject/GTK4 from your distro)
 - Debian/Ubuntu:
-  - `sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection`
+  ```bash
+  sudo apt update && sudo apt install -y python3-gi gir1.2-gtk-4.0 gobject-introspection
+  ```
 - Fedora:
-  - `sudo dnf install -y python3-gobject gtk4`
+  ```bash
+  sudo dnf install -y python3-gobject gtk4
+  ```
 - Arch/Manjaro:
-  - `sudo pacman -S --needed python-gobject gtk4`
+  ```bash
+  sudo pacman -S --needed python-gobject gtk4
+  ```
 - openSUSE:
-  - `sudo zypper install -y python3-gobject gtk4`
+  ```bash
+  sudo zypper install -y python3-gobject gtk4
+  ```
 
 2) Install wbridge (pipx, recommended)
 - From GitHub (works even before a PyPI release):
-  ```
+  ```bash
   pipx install --system-site-packages "git+https://github.com/DasDigitaleMomentum/wbridge.git#egg=wbridge[http]"
   ```
   Notes:
@@ -69,20 +63,20 @@ Flow
 
 3) Launch and verify
 - Start the app:
-  ```
+  ```bash
   wbridge-app
   ```
-  or
-  ```
+  or:
+  ```bash
   wbridge ui show
   ```
 - Quick CLI checks:
-  ```
+  ```bash
   wbridge history list --which clipboard --limit 3
   wbridge selection get --which primary
   ```
 
-Uninstall / Update
+Update / Uninstall
 - Update: `pipx upgrade wbridge`
 - Uninstall: `pipx uninstall wbridge`
 
@@ -92,11 +86,178 @@ Troubleshooting install
 
 ---
 
-## Quick config (V2)
+## Spotlight: Obsidian in 2 minutes
 
-All configuration lives in `~/.config/wbridge/settings.ini`.
+Goal: Append your current selection (Primary Selection or literal text) into `Inbox.md` via the Obsidian Local REST API.
 
-Example:
+Prerequisites
+- Obsidian Local REST API is running
+- An API token (we’ll store it in `settings.ini`)
+
+Step 1 — Inspect and install the profile
+```bash
+# See what will be installed:
+wbridge profile install --name obsidian-local-rest --merge-shortcuts --dry-run
+
+# Install profile artifacts (actions + GNOME shortcuts mapping into settings.ini)
+wbridge profile install --name obsidian-local-rest --merge-shortcuts
+```
+What this does:
+- Adds an action “Obsidian: Append to Inbox.md”
+- Adds a trigger alias `obsidian.append`
+- Suggests a shortcut (e.g. `<Ctrl><Alt>o`) mapped to:
+  ```
+  wbridge trigger obsidian.append --from-primary
+  ```
+
+Step 2 — Add endpoint + token to your settings.ini
+```bash
+# Get the path of your settings.ini:
+wbridge config show-paths --json
+# Open the "settings" path shown above and add/edit:
+```
+
+Add the following to `~/.config/wbridge/settings.ini`:
+```
+[endpoint.obsidian]
+base_url = http://127.0.0.1:27123
+health_path = /health
+trigger_path = /trigger
+
+[secrets]
+obsidian_token = YOUR_TOKEN
+```
+
+Step 3 — Run it
+- Use current Primary Selection (recommended first test):
+  ```bash
+  wbridge trigger obsidian.append --from-primary
+  ```
+- Or send literal text:
+  ```bash
+  wbridge trigger obsidian.append --text "Quick note via wbridge"
+  ```
+
+Useful shell snippet (timestamped note):
+```bash
+wbridge trigger obsidian.append --text "$(printf 'Note %s: %s' "$(date -Iseconds)" "Captured via wbridge")"
+```
+
+Shortcuts sync
+- Shortcuts are sourced from `[gnome.shortcuts]` in `settings.ini`.
+- In the app under Settings → Shortcuts (Config), enable “Auto-apply” for immediate sync or press “Apply now”.
+
+---
+
+## Creative Shortcuts: Recipes
+
+Real-world shortcut ideas that combine your current selection with a shell command. Add the actions via the GUI (Actions → Add) or merge the JSON snippet into ~/.config/wbridge/actions.json. Then bind a GNOME shortcut to the shown trigger.
+
+Recipe: Journal entry (Markdown) — append selection
+- Idea: Take the current selection, prefix it with an ISO timestamp, and append it as a list item to ~/Documents/Journal.md.
+- Action (Shell) reading selection from stdin and appending to a file:
+
+```json
+{
+  "actions": [
+    {
+      "name": "Journal: Append",
+      "type": "shell",
+      "command": "sh",
+      "args": [
+        "-lc",
+        "printf '* %s — %s\\n' \"$(date -Iseconds)\" \"$(cat)\" >> \"$HOME/Documents/Journal.md\""
+      ],
+      "use_shell": true
+    }
+  ],
+  "triggers": {
+    "journal.append": "Journal: Append"
+  }
+}
+```
+
+Notes
+- The file is created automatically if it does not exist. Adjust the path if needed.
+- Selection (including newlines) is safely read from stdin via `$(cat)`.
+
+Trigger and shortcut
+- Suggested GNOME binding: `<Ctrl><Alt>j`
+- Command the binding should run:
+  ```bash
+  wbridge trigger journal.append --from-primary
+  ```
+  Use `--from-clipboard` if you prefer the clipboard buffer.
+
+Usage
+1) Select text in any app (Primary Selection).
+2) Press your shortcut.
+3) A new line is appended to `~/Documents/Journal.md`, for example:
+   `* 2025-08-25T00:41:27+02:00 — Your selected text`
+
+Mini recipe: Scratchpad window for selection
+- Action (Shell):
+  ```json
+  {
+    "name": "Scratchpad: Open",
+    "type": "shell",
+    "command": "sh",
+    "args": ["-lc", "f=\"$(mktemp /tmp/wbridge-XXXX.md)\"; cat > \"$f\"; xdg-open \"$f\" >/dev/null 2>&1 &"],
+    "use_shell": true
+  }
+  ```
+- Trigger and run:
+  ```bash
+  wbridge trigger scratchpad.open --from-primary
+  ```
+
+Mini recipe: Web search for selection (no extra packages)
+- Action (Shell):
+  ```json
+  {
+    "name": "Search: Web",
+    "type": "shell",
+    "command": "sh",
+    "args": ["-lc", "python3 -c 'import sys, urllib.parse, webbrowser; webbrowser.open(\"https://duckduckgo.com/?q=\"+urllib.parse.quote(sys.stdin.read()))'"],
+    "use_shell": true
+  }
+  ```
+- Trigger and run:
+  ```bash
+  wbridge trigger search.web --from-primary
+  ```
+
+## More runnable examples (CLI)
+
+Show UI:
+```bash
+wbridge ui show
+```
+
+Get/set selections:
+```bash
+wbridge selection get --which clipboard
+wbridge selection set --which clipboard --text "Hello from wbridge"
+wbridge history list --which primary --limit 5
+```
+
+Triggers and actions:
+- Run a trigger alias using the current clipboard (default):
+  ```bash
+  wbridge trigger prompt
+  ```
+- Run a named action with literal text:
+  ```bash
+  wbridge trigger --name "Obsidian: Append to Inbox.md" --text "Hello Obsidian"
+  ```
+
+---
+
+## Configuration (V2) — compact
+
+All configuration lives in `~/.config/wbridge/settings.ini`. Actions and triggers live in `~/.config/wbridge/actions.json`.
+
+Example `settings.ini`:
 ```
 [general]
 history_max = 50
@@ -119,95 +280,42 @@ command = <Ctrl><Alt>m
 ui_show = <Ctrl><Alt>u
 ```
 
-- Endpoints: define base URL and paths; use per-row “Health” in Settings → Endpoints to probe `base_url + health_path` (2 s timeout).
-- Secrets: user‑managed key/value store. Reference via `{config.secrets.<key>}` in actions.
-- GNOME Shortcuts: edit `[gnome.shortcuts]` mapping in Settings; Auto‑apply toggles immediate sync; otherwise click “Apply now”.
+Placeholders you can use in actions:
+- `{text}`, `{text_url}`, `{selection.type}`
+- `{config.endpoint.<id>.*}` e.g. `{config.endpoint.local.base_url}`
+- `{config.secrets.<key>}` e.g. `{config.secrets.obsidian_token}`
 
-Placeholders in actions:
-- `{config.endpoint.local.base_url}`, `{config.endpoint.local.trigger_path}`, …
-- `{config.secrets.obsidian_token}`
-- plus common `{text}`, `{text_url}`, `{selection.type}`.
-
----
-
-## First steps (2 minutes)
-
-1) Open the GUI (`wbridge-app` or `wbridge ui show`).
-2) Go to Actions → Add Action.
-   - Type: `http`
-   - Method: `POST`
-   - URL: `{config.endpoint.local.base_url}{config.endpoint.local.trigger_path}`
-   - Use `{text}` in your body or parameters if needed (see placeholders below).
-   - Save.
-3) Go to Triggers → add alias `ingest` → select your new action → Save.
-4) Go to Settings:
-   - Endpoints: add `local` if needed, probe Health.
-   - Shortcuts (Config): set bindings; Auto‑apply ON to sync or OFF + “Apply now”.
-5) Select some text in any app, then run:
-   ```
-   wbridge trigger ingest --from-primary
-   ```
-   or press your shortcut that invokes a trigger.
-
-Tip: Use the Status page to watch logs while testing.
+Shortcuts sync (deterministic)
+- Source of truth: `[gnome.shortcuts]` mapping in `settings.ini`.
+- App can Auto-apply on save or “Apply now” on demand.
 
 ---
 
-## Core concepts (glossary)
+## How it works at a glance
 
-- Clipboard vs Primary Selection
-  - Clipboard: regular copy/paste buffer (Ctrl+C / Ctrl+V).
-  - Primary Selection: mouse‑selection buffer, often pasted via middle‑click. You can keep two parallel buffers.
-- Actions: reusable units you run on the current selection. Types:
-  - HTTP (GET/POST, headers/body). Example placeholders: `{text}`, `{text_url}`, `{selection.type}`, `{config.endpoint.<id>.*}`, `{config.secrets.*}`.
-  - Shell (exec program with args). Use “Use shell” only if you need pipes/globs.
-- Triggers: map a short alias (e.g., `translate`) to an action name. Use aliases in CLI/HTTP.
-- GNOME Custom Shortcuts: system keybindings that run commands like `wbridge trigger translate --from-clipboard`.
-- Profiles: curated presets (actions, triggers, optional settings patches, shortcuts) you can merge into your config.
+1) Select text (Clipboard via Ctrl+C or Primary Selection via mouse).
+2) Press a GNOME shortcut (e.g., Ctrl+Alt+P) that runs a `wbridge` CLI command.
+3) The app reads the selection and executes the configured action (HTTP or Shell).  
+   You see results in the UI (and optionally re‑apply to the Clipboard/Primary).
 
----
-
-## Examples and ideas
-
-- HTTP
-  - POST selected text:
-    ```
-    POST {config.endpoint.local.base_url}{config.endpoint.local.trigger_path}
-    Body: {"text":"{text}","source":"{selection.type}"}
-    ```
-  - GET with query:
-    ```
-    GET {config.endpoint.local.base_url}/search?q={text_url}
-    ```
-- Shell
-  - Uppercase:
-    ```
-    command: tr
-    args: ["a-z","A-Z"]
-    ```
-  - URL‑encode via Python:
-    ```
-    command: python3
-    args: ["-c","import urllib.parse,sys;print(urllib.parse.quote(sys.stdin.read()))"]
-    use_shell: false
-    ```
-- Workflows
-  - “Send to local LLM prompt server; return summary to Clipboard”
-  - “Look up selected code in docs; open browser”
-  - “Normalize JSON; copy result back to Clipboard”
+Flow
+```
+[GNOME Shortcut] → runs → [wbridge CLI] → IPC → [wbridge GTK App]
+                                       → reads selection → runs action → logs/result
+```
 
 ---
 
-## Profiles (example: “witsy” / “obsidian-local-rest”)
+## Profiles
 
 List/show:
-```
+```bash
 wbridge profile list
 wbridge profile show --name witsy
 ```
 
-Install (V2 merge flags):
-```
+Install (merge flags):
+```bash
 # Dry‑run (preview)
 wbridge profile install --name witsy --dry-run
 
@@ -220,8 +328,8 @@ wbridge profile install --name witsy \
 ```
 
 Notes
-- Profiles do not ship your personal tokens. Put tokens in `[secrets]` and reference them via `{config.secrets.<key>}`.
-- There is no direct dconf write in profile install; GNOME shortcuts are synced from INI via the app.
+- Profiles never ship personal tokens. Put tokens in `[secrets]` and reference them via `{config.secrets.<key>}`.
+- No direct dconf write during profile install; GNOME shortcuts are synced from INI via the app.
 
 ---
 
@@ -230,7 +338,6 @@ Notes
 - Wayland‑friendly: no global key grabs; no key injection; GNOME owns shortcuts.
 - Local IPC over Unix domain socket (`0600`) in `$XDG_RUNTIME_DIR`.
 - Actions are explicit. HTTP endpoints and Shell commands are under your control.
-- Be mindful when enabling “Use shell” or calling external endpoints.
 - Secrets live in `~/.config/wbridge/settings.ini` under `[secrets]` (user‑managed).
 
 ---
@@ -238,7 +345,7 @@ Notes
 ## Troubleshooting
 
 - Endpoint not reachable
-  - Settings → Endpoints: use “Health” on the row to test `base_url + health_path`.
+  - Settings → Endpoints: use “Health” to test `base_url + health_path` (2 s timeout).
   - Check the Status page for logs (timeouts, connection errors).
 
 - Shortcuts didn’t sync
@@ -249,10 +356,10 @@ Notes
   - Use pipx with `--system-site-packages`.
   - Ensure `~/.local/bin` is in PATH or use an absolute command in GNOME Shortcuts.
 
-- Start GUI from a source checkout
-  ```
-  PYTHONPATH=src python3 -m wbridge.app
-  ```
+Start GUI from a source checkout:
+```bash
+PYTHONPATH=src python3 -m wbridge.app
+```
 
 ---
 
@@ -272,19 +379,21 @@ Sources: `src/wbridge/help/en/{history,actions,triggers,shortcuts,settings,statu
 
 ## For developers
 
-- System packages as above.
-- Dev install:
-  ```
-  python3 -m venv --system-site-packages .venv
-  . .venv/bin/activate
-  pip install -e ".[http]"
-  ```
-- Run:
-  ```
-  wbridge-app
-  # or
-  PYTHONPATH=src python3 -m wbridge.app
-  ```
+System packages as above.
+
+Dev install:
+```bash
+python3 -m venv --system-site-packages .venv
+. .venv/bin/activate
+pip install -e ".[http]"
+```
+
+Run:
+```bash
+wbridge-app
+# or
+PYTHONPATH=src python3 -m wbridge.app
+```
 
 Project layout (condensed)
 ```
@@ -319,7 +428,10 @@ src/
     assets/style.css     # CSS
 ```
 
-Design & docs
-- Design specification (V2): [DESIGN.md](DESIGN.md)
-- Changelog: [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
+---
+
+## Design & docs
+
+- Design specification (V2): [docs/DESIGN.md](docs/DESIGN.md)
+- Changelog: [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md)
 - License: MIT (see [LICENSE](LICENSE))
