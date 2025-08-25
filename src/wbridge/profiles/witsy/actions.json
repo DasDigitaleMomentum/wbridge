@@ -6,7 +6,8 @@
       "method": "POST",
       "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}",
       "headers": { "Content-Type": "application/json" },
-      "json": { "cmd": "prompt", "text": "{text}" }
+      "json": { "cmd": "prompt", "text": "{text}" },
+      "default_source": "primary"
     },
     {
       "name": "Witsy: command",
@@ -14,7 +15,8 @@
       "method": "POST",
       "url": "{config.endpoint.witsy.base_url}{config.endpoint.witsy.trigger_path}",
       "headers": { "Content-Type": "application/json" },
-      "json": { "cmd": "command", "text": "{text}" }
+      "json": { "cmd": "command", "text": "{text}" },
+      "default_source": "clipboard"
     },
     {
       "name": "Witsy: chat",

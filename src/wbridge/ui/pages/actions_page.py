@@ -209,6 +209,20 @@ class ActionsPage(Gtk.Box):
         row_type.append(self.ed_type_combo)
         form_box.append(row_type)
 
+        # Default source (optional)
+        row_defsrc = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        lbl_defsrc = Gtk.Label(label=_("Default source (optional):"))
+        lbl_defsrc.set_xalign(0.0)
+        self.ed_default_source = Gtk.ComboBoxText()
+        self.ed_default_source.append("unset", _("(none)"))
+        self.ed_default_source.append("clipboard", "clipboard")
+        self.ed_default_source.append("primary", "primary")
+        self.ed_default_source.append("text", "text")
+        self.ed_default_source.set_active_id("unset")
+        row_defsrc.append(lbl_defsrc)
+        row_defsrc.append(self.ed_default_source)
+        form_box.append(row_defsrc)
+
         # HTTP fields
         self.http_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         http_row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -656,6 +670,22 @@ class ActionsPage(Gtk.Box):
         args_buf.set_text(args_pretty, -1)
         self.ed_shell_use_switch.set_active(bool(action.get("use_shell", False)))
 
+        # Bind default_source (optional)
+        try:
+            ds = str(action.get("default_source") or "").lower()
+        except Exception:
+            ds = ""
+        if ds in ("clipboard", "primary", "text"):
+            try:
+                self.ed_default_source.set_active_id(ds)
+            except Exception:
+                pass
+        else:
+            try:
+                self.ed_default_source.set_active_id("unset")
+            except Exception:
+                pass
+
         self._actions_update_type_visibility()
 
     def _actions_update_type_visibility(self) -> None:
@@ -789,6 +819,20 @@ class ActionsPage(Gtk.Box):
                     return
                 obj["args"] = parsed_args
                 obj["use_shell"] = bool(self.ed_shell_use_switch.get_active())
+
+            # default_source (optional)
+            try:
+                ds_id = self.ed_default_source.get_active_id() or "unset"
+            except Exception:
+                ds_id = "unset"
+            if ds_id == "unset":
+                try:
+                    if "default_source" in obj:
+                        del obj["default_source"]
+                except Exception:
+                    pass
+            else:
+                obj["default_source"] = ds_id
 
             ok, err = validate_action_dict(obj)
             if not ok:

@@ -1,7 +1,7 @@
 {
   "shortcuts": [
-    { "name": "Bridge: Prompt",   "command": "wbridge trigger prompt --from-primary",   "binding": "<Ctrl><Alt>p" },
-    { "name": "Bridge: Command",  "command": "wbridge trigger command --from-clipboard", "binding": "<Ctrl><Alt>m" },
-    { "name": "Bridge: Show UI",  "command": "wbridge ui show",                           "binding": "<Ctrl><Alt>u" }
+    { "name": "Bridge: Prompt",   "command": "wbridge trigger prompt",   "binding": "<Ctrl><Alt>p" },
+    { "name": "Bridge: Command",  "command": "wbridge trigger command", "binding": "<Ctrl><Alt>m" },
+    { "name": "Bridge: Show UI",  "command": "wbridge ui show",          "binding": "<Ctrl><Alt>u" }
   ]
 }

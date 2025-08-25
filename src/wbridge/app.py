@@ -359,6 +359,18 @@ class BridgeApplication(Gtk.Application):
             if not action:
                 return {"ok": False, "error": f"action not found: {name}", "code": "NOT_FOUND"}
 
+            # If no explicit source provided, prefer explicit text override, else action.default_source (then fallback remains clipboard in resolver).
+            try:
+                if not src:
+                    if text_override is not None:
+                        src = {"from": "text"}
+                    else:
+                        ds = str(action.get("default_source", "")).lower()
+                        if ds in ("clipboard", "primary", "text"):
+                            src = {"from": ds}
+            except Exception:
+                pass
+
             sel_text, sel_type = self._resolve_source_text(src, text_override)
             # V2: reload settings fresh on each action to reflect edits (endpoints/secrets/shortcuts)
             try:
