@@ -226,6 +226,14 @@ def validate_action_dict(action: Dict[str, Any]) -> tuple[bool, str]:
             return False, "shell action.args must be an array"
         if "use_shell" in action and not isinstance(action.get("use_shell"), bool):
             return False, "shell action.use_shell must be boolean"
+    # optional default source validation (clipboard|primary|text)
+    if "default_source" in action:
+        ds = action.get("default_source")
+        if not isinstance(ds, str):
+            return False, "action.default_source must be a string"
+        ds_l = ds.lower().strip()
+        if ds_l not in ("clipboard", "primary", "text"):
+            return False, "action.default_source must be one of: clipboard, primary, text"
     return True, ""
 
 

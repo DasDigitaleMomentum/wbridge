@@ -30,6 +30,15 @@ What’s on this page
 
 ---
 
+## Default source and priority
+
+- Optional field default_source in an action (values: clipboard | primary | text).
+- Runtime priority:
+  1) Shortcut/CLI flags (--from-clipboard/--from-primary/--text) override everything
+  2) If no flags are provided, the action's default_source is used (when set)
+  3) Otherwise clipboard is used
+- UI “Run” uses the Source selector at the top of this page (independent of default_source). Use default_source for consistent shortcut behavior without flags.
+
 ## Process (overview)
 
 1) Choose Source (Clipboard, Primary, or Text).

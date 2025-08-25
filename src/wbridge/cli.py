@@ -55,6 +55,13 @@ def _print_response(ok: bool, resp: Dict[str, Any]) -> int:
     else:
         msg = resp.get("error", "error")
         print(msg, file=sys.stderr)
+        # Friendly hint for UI show when server/app isn't running or timed out
+        try:
+            code_str = str(resp.get("code", "")).upper()
+            if code_str in ("NOT_RUNNING", "TIMEOUT"):
+                print("Hint: The GUI app may not be running. Start it with 'wbridge-app' and try again.", file=sys.stderr)
+        except Exception:
+            pass
     return code
 
 
@@ -108,15 +115,15 @@ def cmd_history_swap(args: argparse.Namespace) -> int:
     return _print_response(ok, resp)
 
 
-def _source_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+def _source_from_args(args: argparse.Namespace):
     if args.from_clipboard:
         return {"from": "clipboard"}
     if args.from_primary:
         return {"from": "primary"}
     if args.text is not None:
         return {"from": "text"}
-    # default to clipboard if nothing specified
-    return {"from": "clipboard"}
+    # no explicit source: let server apply action.default_source or fallback
+    return None
 
 
 def cmd_trigger(args: argparse.Namespace) -> int:
@@ -126,9 +133,10 @@ def cmd_trigger(args: argparse.Namespace) -> int:
         # Run a named action directly
         req = {
             "op": "action.run",
-            "name": args.name,
-            "source": source
+            "name": args.name
         }
+        if source is not None:
+            req["source"] = source
         if args.text is not None:
             req["text"] = args.text
     else:
@@ -137,9 +145,10 @@ def cmd_trigger(args: argparse.Namespace) -> int:
             return 2
         req = {
             "op": "trigger",
-            "cmd": args.cmd,
-            "source": source
+            "cmd": args.cmd
         }
+        if source is not None:
+            req["source"] = source
         if args.text is not None:
             req["text"] = args.text
 

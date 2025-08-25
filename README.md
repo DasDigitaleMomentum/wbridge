@@ -66,10 +66,11 @@ Typical uses
   ```bash
   wbridge-app
   ```
-  or:
+  or bring the window to the front (if already running):
   ```bash
   wbridge ui show
   ```
+  Note: This does not start the app and, due to Wayland focus rules, may not always take focus.
 - Quick CLI checks:
   ```bash
   wbridge history list --which clipboard --limit 3
@@ -95,6 +96,7 @@ Prerequisites
 - An API token (we’ll store it in `settings.ini`)
 
 Step 1 — Inspect and install the profile
+- Via UI: Settings → Profiles → select “obsidian-local-rest” → Install
 ```bash
 # See what will be installed:
 wbridge profile install --name obsidian-local-rest --merge-shortcuts --dry-run
@@ -129,7 +131,11 @@ obsidian_token = YOUR_TOKEN
 ```
 
 Step 3 — Run it
-- Use current Primary Selection (recommended first test):
+- With the action’s default source (primary) you can run without flags:
+  ```bash
+  wbridge trigger obsidian.append
+  ```
+- Use current Primary Selection explicitly:
   ```bash
   wbridge trigger obsidian.append --from-primary
   ```
@@ -147,85 +153,12 @@ Shortcuts sync
 - Shortcuts are sourced from `[gnome.shortcuts]` in `settings.ini`.
 - In the app under Settings → Shortcuts (Config), enable “Auto-apply” for immediate sync or press “Apply now”.
 
+Source priority
+- Shortcut/CLI flags (`--from-clipboard`, `--from-primary`, `--text`) override everything.
+- If no flags are provided, the action’s `default_source` is used (when set).
+- Otherwise, Clipboard is used.
+
 ---
-
-## Creative Shortcuts: Recipes
-
-Real-world shortcut ideas that combine your current selection with a shell command. Add the actions via the GUI (Actions → Add) or merge the JSON snippet into ~/.config/wbridge/actions.json. Then bind a GNOME shortcut to the shown trigger.
-
-Recipe: Journal entry (Markdown) — append selection
-- Idea: Take the current selection, prefix it with an ISO timestamp, and append it as a list item to ~/Documents/Journal.md.
-- Action (Shell) reading selection from stdin and appending to a file:
-
-```json
-{
-  "actions": [
-    {
-      "name": "Journal: Append",
-      "type": "shell",
-      "command": "sh",
-      "args": [
-        "-lc",
-        "printf '* %s — %s\\n' \"$(date -Iseconds)\" \"$(cat)\" >> \"$HOME/Documents/Journal.md\""
-      ],
-      "use_shell": true
-    }
-  ],
-  "triggers": {
-    "journal.append": "Journal: Append"
-  }
-}
-```
-
-Notes
-- The file is created automatically if it does not exist. Adjust the path if needed.
-- Selection (including newlines) is safely read from stdin via `$(cat)`.
-
-Trigger and shortcut
-- Suggested GNOME binding: `<Ctrl><Alt>j`
-- Command the binding should run:
-  ```bash
-  wbridge trigger journal.append --from-primary
-  ```
-  Use `--from-clipboard` if you prefer the clipboard buffer.
-
-Usage
-1) Select text in any app (Primary Selection).
-2) Press your shortcut.
-3) A new line is appended to `~/Documents/Journal.md`, for example:
-   `* 2025-08-25T00:41:27+02:00 — Your selected text`
-
-Mini recipe: Scratchpad window for selection
-- Action (Shell):
-  ```json
-  {
-    "name": "Scratchpad: Open",
-    "type": "shell",
-    "command": "sh",
-    "args": ["-lc", "f=\"$(mktemp /tmp/wbridge-XXXX.md)\"; cat > \"$f\"; xdg-open \"$f\" >/dev/null 2>&1 &"],
-    "use_shell": true
-  }
-  ```
-- Trigger and run:
-  ```bash
-  wbridge trigger scratchpad.open --from-primary
-  ```
-
-Mini recipe: Web search for selection (no extra packages)
-- Action (Shell):
-  ```json
-  {
-    "name": "Search: Web",
-    "type": "shell",
-    "command": "sh",
-    "args": ["-lc", "python3 -c 'import sys, urllib.parse, webbrowser; webbrowser.open(\"https://duckduckgo.com/?q=\"+urllib.parse.quote(sys.stdin.read()))'"],
-    "use_shell": true
-  }
-  ```
-- Trigger and run:
-  ```bash
-  wbridge trigger search.web --from-primary
-  ```
 
 ## More runnable examples (CLI)
 

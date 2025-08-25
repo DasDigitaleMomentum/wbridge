@@ -9,7 +9,8 @@
         "Authorization": "Bearer {config.secrets.obsidian_token}",
         "Content-Type": "text/markdown"
       },
-      "body_is_text": true
+      "body_is_text": true,
+      "default_source": "primary"
     }
   ],
   "triggers": {

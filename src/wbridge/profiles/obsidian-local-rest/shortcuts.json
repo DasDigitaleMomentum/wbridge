@@ -1,5 +1,5 @@
 {
   "shortcuts": [
-    { "name": "Obsidian: Append", "command": "wbridge trigger obsidian.append --from-primary", "binding": "<Ctrl><Alt>o" }
+    { "name": "Obsidian: Append", "command": "wbridge trigger obsidian.append", "binding": "<Ctrl><Alt>o" }
   ]
 }
