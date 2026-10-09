@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["wayland", "gtk4", "clipboard", "primary-selection", "shortcuts", "cli", "ipc"]
 license = { text = "MIT" }
+authors = [{ name = "Das Digitale Momentum" }]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -25,6 +26,11 @@ dependencies = []
 
 [project.optional-dependencies]
 http = ["requests>=2.31.0"]
+
+[project.urls]
+Homepage = "https://www.das-digitale-momentum.de/en/open-source/#wbridge"
+Repository = "https://github.com/DasDigitaleMomentum/wbridge"
+Issues = "https://github.com/DasDigitaleMomentum/wbridge/issues"
 
 [project.scripts]
 wbridge = "wbridge.cli:main"
