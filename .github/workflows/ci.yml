@@ -55,3 +55,21 @@ jobs:
       # Byte-compiling with the lowest supported Python catches syntax errors.
       - name: Byte-compile sources (Python 3.10)
         run: uv run --no-project --python 3.10 python -m compileall -q src
+
+  ci:
+    # Single required status check, enforced by the org ruleset
+    # "public-default-branch". Add every job of this workflow to `needs`.
+    name: ci
+    if: always()
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail unless all jobs succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = "success" ] || exit 1
+          done
