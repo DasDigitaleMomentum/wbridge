@@ -38,3 +38,6 @@ Thumbs.db
 
 # Project-specific
 implementation_plan.md
+
+# Private working artifacts (agent plans, reviews, session notes); keep local only
+/docs/notes/
