@@ -1,0 +1,24 @@
+# https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.{toml,json,css,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+trim_trailing_whitespace = false
+
+# Contains a whitespace-only line; do not rewrite it on save.
+[src/wbridge/app.py]
+trim_trailing_whitespace = false
