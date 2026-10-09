@@ -368,3 +368,11 @@ src/
 - Design specification (V2): [docs/DESIGN.md](docs/DESIGN.md)
 - Changelog: [docs/IMPLEMENTATION_LOG.md](docs/IMPLEMENTATION_LOG.md)
 - License: MIT (see [LICENSE](LICENSE))
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+---
+
+Maintained by [Das Digitale Momentum](https://www.das-digitale-momentum.de/en/open-source/#wbridge) · Much, Germany · [All our open source projects](https://github.com/DasDigitaleMomentum)
