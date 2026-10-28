@@ -25,7 +25,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-http = ["requests>=2.31.0"]
+http = ["requests>=2.34.2"]
 
 [project.urls]
 Homepage = "https://www.das-digitale-momentum.de/en/open-source/#wbridge"
